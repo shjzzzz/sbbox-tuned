@@ -46,7 +46,7 @@ SYSCTL_CONF="/etc/sysctl.d/99-sbbox.conf"
 LIMITS_CONF="/etc/security/limits.d/99-sbbox.conf"
 SB_SERVICE="sbbox"
 SB_SEC_DIR="$SB_HOME/sec"
-SBBOX_VERSION="v2.7.65"
+SBBOX_VERSION="v2.7.66"
 SB_URL="https://raw.githubusercontent.com/ShJChow/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh"
 # root 装到 /usr/local/bin（始终在 PATH 中）；非 root 退回 ~/bin
 if [ "$(id -u 2>/dev/null)" = "0" ] && [ -d /usr/local/bin ]; then
@@ -407,9 +407,30 @@ try:
         dns['optimistic'] = True
         changed = True
     for ib in data.get('inbounds', []):
-        if ib.get('type') == 'naive' and 'tls' in ib:
-            if ib['tls'].get('min_version') == '1.3':
+        if ib.get('type') == 'naive':
+            if 'tls' in ib and ib['tls'].get('min_version') == '1.3':
                 ib['tls']['min_version'] = '1.2'
+                changed = True
+            if not ib.get('tcp_fast_open'):
+                ib['tcp_fast_open'] = True
+                changed = True
+        if ib.get('type') == 'anytls':
+            if 'tls' in ib and ib['tls'].get('min_version') == '1.3':
+                ib['tls']['min_version'] = '1.2'
+                changed = True
+            if 'tls' in ib and 'handshake_timeout' not in ib['tls']:
+                ib['tls']['handshake_timeout'] = '15s'
+                changed = True
+            if not ib.get('udp_fragment'):
+                ib['udp_fragment'] = True
+                changed = True
+            if 'udp_timeout' not in ib:
+                ib['udp_timeout'] = '300s'
+                changed = True
+            if 'tcp_keep_alive' not in ib:
+                ib['disable_tcp_keep_alive'] = False
+                ib['tcp_keep_alive'] = '30s'
+                ib['tcp_keep_alive_interval'] = '5s'
                 changed = True
     if changed:
         with open('$conf', 'w', encoding='utf-8') as f:
@@ -430,9 +451,30 @@ try:
             del cf[k]
             changed = True
     for ib in data.get('inbounds', []):
-        if ib.get('type') == 'naive' and 'tls' in ib:
-            if ib['tls'].get('min_version') == '1.3':
+        if ib.get('type') == 'naive':
+            if 'tls' in ib and ib['tls'].get('min_version') == '1.3':
                 ib['tls']['min_version'] = '1.2'
+                changed = True
+            if not ib.get('tcp_fast_open'):
+                ib['tcp_fast_open'] = True
+                changed = True
+        if ib.get('type') == 'anytls':
+            if 'tls' in ib and ib['tls'].get('min_version') == '1.3':
+                ib['tls']['min_version'] = '1.2'
+                changed = True
+            if 'tls' in ib and 'handshake_timeout' not in ib['tls']:
+                ib['tls']['handshake_timeout'] = '15s'
+                changed = True
+            if not ib.get('udp_fragment'):
+                ib['udp_fragment'] = True
+                changed = True
+            if 'udp_timeout' not in ib:
+                ib['udp_timeout'] = '300s'
+                changed = True
+            if 'tcp_keep_alive' not in ib:
+                ib['disable_tcp_keep_alive'] = False
+                ib['tcp_keep_alive'] = '30s'
+                ib['tcp_keep_alive_interval'] = '5s'
                 changed = True
     if changed:
         with open('$conf', 'w', encoding='utf-8') as f:
@@ -1901,6 +1943,7 @@ EOF
             "tag": "naive-in",
             "listen": "::",
             "listen_port": $port_nv,
+            "tcp_fast_open": true,
             "tcp_multi_path": true,
             "udp_fragment": true,
             "udp_timeout": "300s",
@@ -1924,7 +1967,7 @@ EOF
 EOF
   fi
 
-  # AnyTLS (sing-box 1.14: TCP + TLS 1.3 + Full Padding Scheme + Multiplex)
+  # AnyTLS (sing-box 1.14: TCP + TLS 1.3/1.2 + Full Padding Scheme + Multiplex)
   if [ -n "$anyp" ] && [ "$CERT_OK" = 1 ]; then
     cat >> "$SB_CONF" <<EOF
         {
@@ -1934,6 +1977,11 @@ EOF
             "listen_port": $port_any,
             "tcp_fast_open": true,
             "tcp_multi_path": false,
+            "disable_tcp_keep_alive": false,
+            "tcp_keep_alive": "30s",
+            "tcp_keep_alive_interval": "5s",
+            "udp_fragment": true,
+            "udp_timeout": "300s",
             "users": [
                 {
                     "name": "default",
@@ -1943,10 +1991,11 @@ EOF
             "tls": {
                 "enabled": true,
                 "server_name": "$ym",
-                "min_version": "1.3",
+                "min_version": "1.2",
                 "alpn": [ "h2", "http/1.1" ],
                 "certificate_path": "$cert_path",
-                "key_path": "$key_path"
+                "key_path": "$key_path",
+                "handshake_timeout": "15s"
             }
         },
 EOF
@@ -2193,7 +2242,7 @@ gen_client() {
     local any_pcs="" any_pin=""
     [ "$CERT_OK" != 1 ] && [ -n "$_fp" ] && any_pcs="&pcs=$_fp"
     [ "$CERT_OK" != 1 ] && [ -n "$_sha" ] && any_pin="&pinSHA256=$_sha"
-    any_link="anytls://$(rawurlencode "$pw_any")@$add:$port_any?security=tls&alpn=h2&sni=$sni&insecure=$jhins$any_pcs$any_pin#anytls-$node_tag"
+    any_link="anytls://$(rawurlencode "$pw_any")@$add:$port_any?security=tls&alpn=h2&sni=$sni&peer=$sni&insecure=$jhins&allowInsecure=$jhins&allow_insecure=$jhins&udp=1$any_pcs$any_pin#anytls-$node_tag"
     echo "$any_link" >> "$SB_LINK"
     echo "💣【 🥈 AnyTLS + TLS (新一代 TCP 主力) 】节点信息如下："
     echo "$any_link"; echo
@@ -2208,7 +2257,7 @@ gen_client() {
 
     # v2.7.28：去掉 http3:// / http2:// 两条同入站的重复写法（v2rayN 不识别，导入即 -1）
     nv1_link="naive+quic://$(rawurlencode "$nv_user"):$(rawurlencode "$nv_pw")@$add:$port_nv?quic=1&congestion_control=bbr&security=tls&sni=$sni&insecure=0&allowInsecure=0&padding=1$nv_uot$nv_pcs$nv_pin#naive-h3-$node_tag"
-    nv2_link="naive+https://$(rawurlencode "$nv_user"):$(rawurlencode "$nv_pw")@$add:$port_nv?security=tls&sni=$sni&insecure=0&allowInsecure=0&padding=1$nv_uot$nv_pcs$nv_pin#naive-h2-$node_tag"
+    nv2_link="naive+https://$(rawurlencode "$nv_user"):$(rawurlencode "$nv_pw")@$add:$port_nv?quic=1&congestion_control=bbr&security=tls&sni=$sni&insecure=0&allowInsecure=0&padding=1$nv_uot$nv_pcs$nv_pin#naive-h2-$node_tag"
 
     for l in "$nv1_link" "$nv2_link"; do
       echo "$l" >> "$SB_LINK"
@@ -2520,8 +2569,9 @@ class SubHandler(BaseHTTPRequestHandler):
             if os.path.isfile(clash_file):
                 with open(clash_file, "r", encoding="utf-8", errors="ignore") as f:
                     content_str = f.read()
-                # 兼容隔离：Clash/Mihomo/Stash 原生不支持 anytls 协议，进行容错清洗避免整份配置不可用
-                if "anytls=1" not in q_lower:
+                # 兼容隔离：仅对纯原版非 Meta Clash 客户端容错清洗 anytls；Mihomo/Meta/Stash 等原生支持客户端保留
+                is_meta = any(k in ua for k in ("mihomo", "meta", "stash", "sing", "verge", "flclash")) or "anytls=1" in q_lower or "meta=1" in q_lower
+                if not is_meta:
                     content_str = sanitize_clash_yaml(content_str)
                 content = content_str.encode("utf-8")
                 self.send_response(200)
@@ -2590,7 +2640,7 @@ class SubHandler(BaseHTTPRequestHandler):
 
         def ensure_node_security(l):
             # 1. 确保 tuic:// 与 anytls:// 保留 security=tls 强校验参数（避免 v2rayN 缺少 TLS 导致 sing-box core 闪退）
-            if l.startswith(("tuic://", "anytls://")):
+            if l.startswith("anytls://"):
                 if "security=" not in l:
                     if "?" in l:
                         l = l.replace("?", "?security=tls&", 1)
@@ -2599,6 +2649,10 @@ class SubHandler(BaseHTTPRequestHandler):
                         l = f"{p[0]}?security=tls#{p[1]}"
                     else:
                         l = l + "?security=tls"
+                if "udp=" not in l:
+                    l = l.replace("?", "?udp=1&", 1) if "?" in l else l + "?udp=1"
+                if "allowInsecure=" not in l:
+                    l = l.replace("?", "?allowInsecure=0&allow_insecure=0&", 1) if "?" in l else l + "?allowInsecure=0&allow_insecure=0"
             # 2. 确保 tuic:// 显式声明 version=5（小火箭解析规范强依赖，避免误判为 TUIC v4 握手失败）
             if l.startswith("tuic://"):
                 if "version=" not in l:
@@ -2615,11 +2669,12 @@ class SubHandler(BaseHTTPRequestHandler):
 
         # Shadowrocket（小火箭）客户端适配：
         # - 小火箭仅支持 http3:// 与 http2:// 格式的 Naive 链接（按 UA 现场转换）
-        # - 小火箭原生不支持 anytls:// 协议（导入显示未知/不可用），在此过滤隔离
+        # - 小火箭 2.2.65+ 原生支持 anytls:// 协议（默认保留下发，旧版本可通过 noanytls=1 剔除）
         # - TUIC 节点已通过 ensure_node_security 保证 version=5 声明
         is_sr = "shadowrocket" in ua or force_format == "shadowrocket" or "shadowrocket=1" in q_lower or "format=shadowrocket" in q_lower
         if is_sr:
-            selected_links = [l for l in selected_links if not l.startswith("anytls://")]
+            if "noanytls=1" in q_lower:
+                selected_links = [l for l in selected_links if not l.startswith("anytls://")]
             selected_links = [("http3://" + l[len("naive+quic://"):]) if l.startswith("naive+quic://")
                               else ("http2://" + l[len("naive+https://"):]) if l.startswith("naive+https://")
                               else l for l in selected_links]
@@ -2895,11 +2950,16 @@ gen_client_sbox() {
         "bind_address_no_port": true,
         "tcp_keep_alive": "30s",
         "tcp_keep_alive_interval": "5s",
+        "udp_fragment": true,
         "tls": {
             "enabled": true,
             "server_name": "'"$sni"'",
-            "alpn": ["h2"],
-            "insecure": '"$msins"'
+            "alpn": ["h2", "http/1.1"],
+            "insecure": '"$msins"',
+            "utls": {
+                "enabled": true,
+                "fingerprint": "chrome"
+            }
         }
     }')
     tags+=("anytls")
@@ -2937,6 +2997,7 @@ gen_client_sbox() {
         "quic": true,
         "quic_congestion_control": "bbr",
         "bind_address_no_port": true,
+        "udp_fragment": true,
         "tls": { "enabled": true, "insecure": false, "server_name": "'"$sni"'" }
     }')
     tags+=("naive-h3")
@@ -2949,9 +3010,12 @@ gen_client_sbox() {
         "password": "'"$nv_pw"'",
         "insecure_concurrency": 1,
         "stream_receive_window": 67108864,
+        "quic_session_receive_window": 134217728,
         "udp_over_tcp": true,
-        "quic": false,
+        "quic": true,
+        "quic_congestion_control": "bbr",
         "bind_address_no_port": true,
+        "udp_fragment": true,
         "tls": { "enabled": true, "insecure": false, "server_name": "'"$sni"'" }
     }')
     tags+=("naive-h2")
@@ -3173,11 +3237,9 @@ gen_client_clash() {
   fi
 
   # 2. 🥈 AnyTLS (新一代 TCP 主力)
-  # 注意：绝大多数标准 Clash / Mihomo / Stash 版本尚未支持 anytls 协议。
-  # 直接写入 `type: anytls` 会导致客户端配置解析报错（unknown proxy type: anytls）使整份订阅不可用。
-  # 默认进行兼容隔离（不写入 clmi.yaml，客户端请使用 sing-box 原生客户端或 v2rayN）。
-  # 若确需在支持 anytls 的特殊实验版本中下发，可通过 export CLASH_ANYTLS=1 开启。
-  if [ -n "$anyp" ] && [ "$CERT_OK" = 1 ] && [ "${CLASH_ANYTLS:-0}" = "1" ]; then
+  # Mihomo (Clash Meta) 原生支持 anytls 协议；默认写入 clmi.yaml，并支持 client-fingerprint 与 udp。
+  # 订阅服务 sub_server.py 会自动按 UA 对陈旧非 Meta 客户端进行兼容容错过滤，消除配置报错。
+  if [ -n "$anyp" ] && [ "$CERT_OK" = 1 ]; then
     proxies="$proxies
   - name: anytls-$node_tag
     server: $add
@@ -3187,6 +3249,8 @@ gen_client_clash() {
     sni: $sni
     alpn: [h2]
     skip-cert-verify: $msins
+    client-fingerprint: chrome
+    udp: true
     idle-session-check-interval: 15
     idle-session-timeout: 300
     min-idle-session: 4"
@@ -4857,7 +4921,7 @@ status_show() {
     echo -e "  内核版本:     $("$SB_BIN" version 2>/dev/null | head -1)"
     if [ "$cur_ch" = "pre" ]; then
       echo -e "  更新通道:     ${YELLOW}pre-release (测试版，跟踪最新特性)${NC}"
-      echo -e "  已启特性:     ${GREEN}DNS乐观缓存、1.14/1.15原生API、1.15 cache_file批量缓冲(1MB/1m)、NaiveProxy H2/H3双栈${NC}"
+      echo -e "  已启特性:     ${GREEN}DNS乐观缓存、1.14/1.15原生API、1.15 cache_file批量缓冲(1MB/1m)、NaiveProxy H2/H3全QUIC极速加速、AnyTLS 0-RTT会话池/uTLS/全端兼容${NC}"
     else
       echo -e "  更新通道:     ${GREEN}stable (官方稳定正式版)${NC}"
     fi

@@ -166,8 +166,9 @@ class SubHandler(BaseHTTPRequestHandler):
             if os.path.isfile(clash_file):
                 with open(clash_file, "r", encoding="utf-8", errors="ignore") as f:
                     content_str = f.read()
-                # 兼容隔离：Clash/Mihomo/Stash 原生不支持 anytls 协议，进行容错清洗避免整份配置不可用
-                if "anytls=1" not in q_lower:
+                # 兼容隔离：仅对纯原版非 Meta Clash 客户端容错清洗 anytls；Mihomo/Meta/Stash 等原生支持客户端保留
+                is_meta = any(k in ua for k in ("mihomo", "meta", "stash", "sing", "verge", "flclash")) or "anytls=1" in q_lower or "meta=1" in q_lower
+                if not is_meta:
                     content_str = sanitize_clash_yaml(content_str)
                 content = content_str.encode("utf-8")
                 self.send_response(200)
@@ -236,7 +237,7 @@ class SubHandler(BaseHTTPRequestHandler):
 
         def ensure_node_security(l):
             # 1. 确保 tuic:// 与 anytls:// 保留 security=tls 强校验参数（避免 v2rayN 缺少 TLS 导致 sing-box core 闪退）
-            if l.startswith(("tuic://", "anytls://")):
+            if l.startswith("anytls://"):
                 if "security=" not in l:
                     if "?" in l:
                         l = l.replace("?", "?security=tls&", 1)
@@ -245,6 +246,10 @@ class SubHandler(BaseHTTPRequestHandler):
                         l = f"{p[0]}?security=tls#{p[1]}"
                     else:
                         l = l + "?security=tls"
+                if "udp=" not in l:
+                    l = l.replace("?", "?udp=1&", 1) if "?" in l else l + "?udp=1"
+                if "allowInsecure=" not in l:
+                    l = l.replace("?", "?allowInsecure=0&allow_insecure=0&", 1) if "?" in l else l + "?allowInsecure=0&allow_insecure=0"
             # 2. 确保 tuic:// 显式声明 version=5（小火箭解析规范强依赖，避免误判为 TUIC v4 握手失败）
             if l.startswith("tuic://"):
                 if "version=" not in l:
@@ -261,11 +266,12 @@ class SubHandler(BaseHTTPRequestHandler):
 
         # Shadowrocket（小火箭）客户端适配：
         # - 小火箭仅支持 http3:// 与 http2:// 格式的 Naive 链接（按 UA 现场转换）
-        # - 小火箭原生不支持 anytls:// 协议（导入显示未知/不可用），在此过滤隔离
+        # - 小火箭 2.2.65+ 原生支持 anytls:// 协议（默认保留下发，旧版本可通过 noanytls=1 剔除）
         # - TUIC 节点已通过 ensure_node_security 保证 version=5 声明
         is_sr = "shadowrocket" in ua or force_format == "shadowrocket" or "shadowrocket=1" in q_lower or "format=shadowrocket" in q_lower
         if is_sr:
-            selected_links = [l for l in selected_links if not l.startswith("anytls://")]
+            if "noanytls=1" in q_lower:
+                selected_links = [l for l in selected_links if not l.startswith("anytls://")]
             selected_links = [("http3://" + l[len("naive+quic://"):]) if l.startswith("naive+quic://")
                               else ("http2://" + l[len("naive+https://"):]) if l.startswith("naive+https://")
                               else l for l in selected_links]
