@@ -201,10 +201,9 @@ jobs:
           # 分享链接要带 uot=1（v2rayN NaiveFmt 解析）和 congestion_control=bbr
           # v2.7.28 起 nodes.txt 中 Naive 仅保留 2 条（naive+quic:// 与 naive+https://）
           grep -c 'uot=1' "$HOME/sbbox/nodes.txt" | grep -qx '2'             || { echo "2 条 naive 链接都应带 uot=1（UDP over TCP）"; exit 1; }
-          # 固定证书：pcs= 应为 64 位 hex 指纹（naive 2 条必带，tuic 全协议时也带，故 >=2）
-          PCS=$(grep -c 'pcs=[0-9a-fA-F]\{64\}' "$HOME/sbbox/nodes.txt" || true)
-          [ "$PCS" -ge 2 ] || { echo "naive 链接应带证书 SHA-256 指纹 pcs="; exit 1; }
-          echo "OK: 分享链接已带 uot=1、拥塞控制与证书指纹参数"
+          # naive 只在有正规证书时启用；v2.7.59 起正规证书不固定叶证书指纹（续期即失效），链接不带 pcs=
+          ! grep '^naive' "$HOME/sbbox/nodes.txt" | grep -q 'pcs=' || { echo "正规证书的 naive 链接不应带 pcs 固定（见 v2.7.59）"; exit 1; }
+          echo "OK: 分享链接已带 uot=1 与拥塞控制参数，且不固定叶证书指纹"
 
       - name: 断言 Tuic TLS 加固（utls + 公钥固定）
         run: |
