@@ -46,7 +46,7 @@ SYSCTL_CONF="/etc/sysctl.d/99-sbbox.conf"
 LIMITS_CONF="/etc/security/limits.d/99-sbbox.conf"
 SB_SERVICE="sbbox"
 SB_SEC_DIR="$SB_HOME/sec"
-SBBOX_VERSION="v2.7.66"
+SBBOX_VERSION="v2.7.67"
 SB_URL="https://raw.githubusercontent.com/ShJChow/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh"
 # root 装到 /usr/local/bin（始终在 PATH 中）；非 root 退回 ~/bin
 if [ "$(id -u 2>/dev/null)" = "0" ] && [ -d /usr/local/bin ]; then
@@ -3120,7 +3120,7 @@ gen_client_sbox() {
     "dns": {
         "servers": [
             { "tag": "remote", "type": "https", "server": "1.1.1.1", "detour": "select" },
-            { "tag": "local", "type": "udp", "server": "223.5.5.5", "detour": "direct" },
+            { "tag": "local", "type": "https", "server": "223.5.5.5", "detour": "direct" },
             { "tag": "fakeip", "type": "fakeip", "inet4_range": "198.18.0.0/15", "inet6_range": "fc00::/18" }
         ],
         "rules": [
@@ -3330,6 +3330,16 @@ dns:
   enable: true
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.1/16
+  ipv6: false
+  # respect-rules：nameserver 的 DoH 查询也按 rules 走代理，不再从本机 IP 直连 Cloudflare / Quad9（dnsleaktest 会暴露）。
+  # default-nameserver / proxy-server-nameserver 只用来解析节点服务器域名，本来就必须直连，用 IP 型 DoH，不发明文 UDP。
+  respect-rules: true
+  default-nameserver:
+    - https://1.1.1.1/dns-query
+    - https://9.9.9.9/dns-query
+  proxy-server-nameserver:
+    - https://1.1.1.1/dns-query
+    - https://9.9.9.9/dns-query
   nameserver:
     - https://1.1.1.1/dns-query
     - https://9.9.9.9/dns-query
@@ -3523,9 +3533,19 @@ hy2_external_sync_secrets() {
 hy2_external_sync_resolver() {
   local f=/etc/hysteria/sbbox.yaml
   [ -f "$f" ] || return 1
-  grep -q '^resolver:' "$f" 2>/dev/null && return 1
+  # v2.7.57：旧版写的明文 UDP 9.9.9.10:53 迁移成 DoT（服务器上每条域名查询原来都以明文发出）。
+  # 只迁移 sbbox 自己写的那一段（type: udp + addr: 9.9.9.10:53），用户改过的 resolver 原样保留。
+  if grep -q '^resolver:' "$f" 2>/dev/null; then
+    if grep -q '^  type: udp$' "$f" 2>/dev/null && grep -q '^    addr: 9.9.9.10:53$' "$f" 2>/dev/null; then
+      cp -a "$f" "$f.bak" 2>/dev/null
+      sed -i -e 's|^  type: udp$|  type: tls|' -e 's|^  udp:$|  tls:|' \
+             -e 's|^    addr: 9.9.9.10:53$|    addr: 9.9.9.10:853\n    sni: dns10.quad9.net\n    insecure: false|' "$f"
+      return 0
+    fi
+    return 1
+  fi
   cp -a "$f" "$f.bak" 2>/dev/null
-  printf '\n# 出站 DNS：与 sing-box 服务端一致，选近端 CDN 边缘（sbbox v2.7.37）\nresolver:\n  type: udp\n  udp:\n    addr: 9.9.9.10:53\n    timeout: 4s\n' >> "$f"
+  printf '\n# 出站 DNS：与 sing-box 服务端一致，选近端 CDN 边缘（sbbox v2.7.37）\nresolver:\n  type: tls\n  tls:\n    addr: 9.9.9.10:853\n    timeout: 4s\n    sni: dns10.quad9.net\n    insecure: false\n' >> "$f"
 }
 
 hy2_external_restart() {
@@ -5978,6 +5998,11 @@ doctor() {
     echo -e "外置 Hysteria2 出站 DNS：${RED}未指定${NC}（走系统解析，可能连到远端 CDN 边缘）"
     issues=$((issues+1))
   fi
+  # 外置 Hysteria2 的出站 DNS 还是旧版写的明文 UDP 9.9.9.10:53 → 迁移成 DoT（服务器上的域名查询不再明文）
+  if hy2_external && [ -f /etc/hysteria/sbbox.yaml ] && grep -q '^  type: udp$' /etc/hysteria/sbbox.yaml && grep -q '^    addr: 9.9.9.10:53$' /etc/hysteria/sbbox.yaml; then
+    echo -e "外置 Hysteria2 出站 DNS：${RED}明文 UDP 9.9.9.10:53${NC}（应改为 DoT）"
+    issues=$((issues+1))
+  fi
 
   # 续期钩子：未挂则 acme 续期后 $CERT_DIR 不更新，证书到期当天全部 TLS 节点失效
   cert_hook_state
@@ -6036,7 +6061,7 @@ doctor() {
   # 外置 Hysteria2 出站 DNS 未指定 → 补上并重启
   if hy2_external && hy2_external_sync_resolver; then
     systemctl restart hysteria-sbbox >/dev/null 2>&1 && {
-      echo -e "外置 Hysteria2 出站 DNS：${GREEN}已指定 9.9.9.10${NC}"; fixed=$((fixed+1)); }
+      echo -e "外置 Hysteria2 出站 DNS：${GREEN}已指定 9.9.9.10（DoT）${NC}"; fixed=$((fixed+1)); }
   fi
 
   # 续期钩子未挂 → 挂上

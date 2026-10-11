@@ -39,7 +39,7 @@
 - [七、内核版本管理](#七内核版本管理)
 - [八、v2rayN 订阅与客户端配置](#八v2rayn-订阅与客户端配置)
 - [九、四条节点实测吞吐](#九四条节点实测吞吐)
-- [十、版本迭代与核心调优演进记录 (v2.1 - v2.7.66)](#十版本迭代与核心调优演进记录-v21---v2766)
+- [十、版本迭代与核心调优演进记录 (v2.1 - v2.7.67)](#十版本迭代与核心调优演进记录-v21---v2767)
 - [十一、免责声明](#十一免责声明)
 
 ---
@@ -339,12 +339,13 @@ Naiveproxy 节点按 QUIC (H3) 优先排列：
 
 ---
 
-## 十、版本迭代与核心调优演进记录 (v2.1 - v2.7.66)
+## 十、版本迭代与核心调优演进记录 (v2.1 - v2.7.67)
 
 本项目经跨洋弱网环境（160ms+ / 1% 丢包）数十轮实测迭代，核心演进总结如下：
 
 | 演进领域 | 涉及版本 | 核心技术方案与调优结论 |
 | :--- | :--- | :--- |
+| **DNS 防泄漏** | v2.7.67 | 在 Linux netns 抓包实测后修复：1) sing-box 客户端 `local` 解析器从明文 UDP `223.5.5.5` 改为 DoH（直连），抓包不再有明文 53 端口包；2) `clmi.yaml`（Clash/Mihomo）加 `respect-rules`、`default-nameserver`、`proxy-server-nameserver`、`ipv6: false`，nameserver 的 DoH 查询不再从本机 IP 直连 Cloudflare / Quad9（直连 DoH 连接数减半，剩下的是解析节点域名，必须直连）；3) 外置 Hysteria2 的出站 DNS 从明文 UDP `9.9.9.10:53` 改为 DoT（`9.9.9.10:853`，SNI `dns10.quad9.net`，证书已用 openssl 校验；字段依 Hysteria2 源码，未装外置 hysteria 实测），旧配置由 `sbbox selftest` 检出并迁移。sing-box 服务端本来就是 DoT，未改。 |
 | **提升 AnyTLS 兼容性与极速性能 · Naive-h2 全面开启所有加速项目（含 QUIC 选项）** | v2.7.66 | 1) **AnyTLS 全端兼容与提速**：服务端入站（`anytls-in`）与客户端出站补齐 `disable_tcp_keep_alive: false`、`tcp_keep_alive: 30s` 与 `tcp_keep_alive_interval: 5s` 防止 NAT 静默断连，补齐 `udp_fragment: true` 与 `udp_timeout: 300s`，TLS 最低版本调为 `1.2` 兼容模式并保留 TLS 1.3 极速协商与 15s 握手超时；客户端（sing-box）注入 Chrome uTLS 指纹（`utls: { enabled: true, fingerprint: chrome }`）与双 ALPN 兜底（`["h2", "http/1.1"]`），保持 4 条热温会话 0-RTT 极速建连；Mihomo/Clash 默认写入 `clmi.yaml` 并开启 `client-fingerprint: chrome` 与 `udp: true`，订阅服务仅对陈旧非 Meta 客户端按 UA 容错隔离；Shadowrocket 原生保留 `anytls://` 链接并补齐全端参数（`peer`、`allowInsecure`、`udp=1`）；2) **Naive-h2 全面开启所有加速项目（含 QUIC 选项）**：`naive-h2` 客户端出站全面启用 QUIC 极速传输（`quic: true`）、BBR 拥塞控制（`quic_congestion_control: bbr`）、128MB QUIC 会话大接收窗口（`quic_session_receive_window: 134217728`）、64MB 流接收窗口（`stream_receive_window: 67108864`）、UDP over TCP 隧道加速（`udp_over_tcp: true`）、UDP 分片（`udp_fragment: true`）与端口复用优化（`bind_address_no_port: true`）；分享链接保留 `naive+https://` 格式以兼容传统解析引擎，并注入 `quic=1&congestion_control=bbr` 及全量加速参数；服务端 `naive-in` 开启入站 TCP Fast Open（`tcp_fast_open: true`）。 |
 | **全面加固多端客户端兼容性（Sing-box TUN MTU 1500 / Shadowrocket TUIC v5与AnyTLS过滤 / Clash AnyTLS隔离容错 / v2rayN TLS校验）** | v2.7.65 | 1) **Sing-box 原生客户端 TUN MTU 修正**：客户端配置模板及订阅服务下发的 TUN 入站 MTU 由 9000 巨型帧修正为标准 1500，杜绝公网 PMTU 黑洞丢包；2) **Shadowrocket（小火箭）多协议适配**：TUIC 节点链接显式声明 `version=5`，消除被误判为 v4 导致的握手失败；过滤小火箭原生不支持的 `anytls://` 协议（避免导入显示未知/不可用）；保持 NaiveProxy 的 `http3://`/`http2://` 格式自适应转换；3) **Clash / Mihomo 兼容隔离与安全容错**：针对大部分 Clash/Mihomo/Stash 版本不支持 `type: anytls`，默认隔离不写入 `clmi.yaml` 并由订阅服务动态容错清洗，彻底杜绝整份订阅解析报错；复核 TUIC（`congestion-controller: cubic`）与 Hysteria2（`obfs: salamander`）字段在 Mihomo 下的完全兼容；4) **v2rayN 强校验加固**：确保 `tuic://` 与 `anytls://` 链接始终保留 `security=tls` 强校验参数，防止缺少 TLS 配置导致 sing-box core 崩溃闪退。 |
 | **流控调优与 xh 完全对齐（以 xh 为基准自适应大内存 128MB 缓冲与 initcwnd 32 加速）** | v2.7.64 | 以 `xh`（Xray-core-xhttp）调优基准深度统一 `sbbox` 调优方案：1) 内存分档自适应对齐：>=4GB 档位（medium/large）收发与 TCP 缓冲区上限全面释放为 128MB (`134217728`)，`optmem_max` 动态分配为 128KB (`131072`)；2) 多核软中断与流表动态伸缩：`rps_sock_flow_entries` 按 CPU 核心数自适应伸缩 `$((8192 * CPU_CORES))`；3) 网卡运行时脚本 (`sbbox-nic-tune`) 全面对齐：默认路由注入 `initcwnd 32 initrwnd 32` 加速 TLS 握手，多网卡动态遍历绑定多核 RPS/RFS 及 `fq` 队列调度；4) 防火墙防护：补齐 FORWARD 链 `TCPMSS --clamp-mss-to-pmtu`，根治公网 PMTU 黑洞丢包；5) 客户端 Linux 调优指南及状态展示 Before/After 同步对齐 128MB 缓冲标准。 |
