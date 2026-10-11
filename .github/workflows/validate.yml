@@ -139,7 +139,8 @@ jobs:
           CONF="$HOME/sbbox/sb.json"
           jq -e '.inbounds[]|select(.type=="anytls")|(.tls.min_version=="1.2" or .tls.min_version=="1.3")' "$CONF" >/dev/null \
             || { echo "服务端 anytls 入站应配置合规的 TLS 版本"; exit 1; }
-          jq -e '.outbounds[]|select(.type=="anytls")|(.tls.min_version=="1.2" or .tls.min_version=="1.3") and .tls.utls.fingerprint=="chrome"' "$CLIENT" >/dev/null \
+          # 客户端出站不写 min_version（sing-box 默认即 1.2 起），只要求启用 TLS 与 uTLS Chrome 指纹
+          jq -e '.outbounds[]|select(.type=="anytls")|.tls.enabled==true and .tls.utls.fingerprint=="chrome"' "$CLIENT" >/dev/null \
             || { echo "客户端 anytls 出站应启用 TLS 与 uTLS Chrome 指纹"; exit 1; }
           grep -q '^anytls://' "$HOME/sbbox/nodes.txt" \
             || { echo "nodes.txt 应包含 anytls:// 节点链接"; exit 1; }
@@ -237,17 +238,19 @@ jobs:
           fi
           echo "OK: 嗅探已启用，Tuic UDP 模式互斥正确"
 
-      - name: 断言 Tuic 分享链接带证书固定且不带 uTLS 指纹
+      - name: 断言 Tuic 分享链接不带 uTLS 指纹且证书固定符合预期
         run: |
           set -euo pipefail
           if ! echo '${{ matrix.env }}' | grep -q 'tup=1'; then exit 0; fi
           LINK=$(grep '^tuic://' "$HOME/sbbox/nodes.txt" | head -1)
           # Tuic 是 QUIC 传输，uTLS 会报错 "unsupported usage for uTLS"，严禁带 fp=
           echo "$LINK" | grep -q 'fp=' && { echo "tuic 链接不能带 fp=（QUIC 不支持 uTLS）"; exit 1; } || true
+          # v2.7.59 起：正规 acme 证书（alns=1）不再固定叶证书指纹（证书续期一换就失效），链接不带 pcs；
+          # 自签证书才带 pcs 固定。
           if echo '${{ matrix.env }}' | grep -q 'alns=1'; then
-            echo "$LINK" | grep -qE 'pcs=[0-9a-fA-F]{64}' || { echo "有证书时 tuic 链接应带 pcs 指纹"; exit 1; }
+            echo "$LINK" | grep -q 'pcs=' && { echo "正规证书的 tuic 链接不应带 pcs 固定（见 v2.7.59）"; exit 1; } || true
           fi
-          echo "OK: Tuic 链接已带证书固定且排除了 uTLS 伪装"
+          echo "OK: Tuic 链接不带 uTLS 指纹，证书固定符合预期"
 
       - name: 校验 Clash/Mihomo YAML 与订阅
         run: |
