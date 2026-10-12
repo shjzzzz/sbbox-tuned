@@ -3874,6 +3874,58 @@ get_default_brutal_speed_mbps() {
   echo "$target"
 }
 
+choose_brutal_speed() {
+  local input="${1:-}"
+  if [ -n "$input" ] && [ "$input" != "auto" ]; then
+    echo "$input"
+    return 0
+  fi
+
+  if [ ! -t 0 ]; then
+    get_default_brutal_speed_mbps
+    return 0
+  fi
+
+  local max_spd def_spd
+  max_spd=$(get_machine_max_speed_mbps)
+  def_spd=$(( max_spd * 95 / 100 ))
+  [ "$def_spd" -gt 0 ] || def_spd=950
+
+  echo "" >&2
+  echo -e "${CYAN}--- 请选择 TCP Brutal 下发速率 (建议对齐客户端实际下行宽带) ---${NC}" >&2
+  echo -e "  ${YELLOW}注意：Brutal 属固定速率发包；若高于客户端物理带宽会引发严重丢包，设为下行 80%~90% 最优。${NC}" >&2
+  echo "  1) 100 Mbps   (手机蜂窝 / 百兆宽带，推荐下发 90M)" >&2
+  echo "  2) 300 Mbps   (主流家庭宽带，推荐下发 270M)" >&2
+  echo "  3) 500 Mbps   (中高规格宽带，推荐下发 450M)" >&2
+  echo "  4) 1000 Mbps  (千兆极速光纤，推荐下发 900M)" >&2
+  echo "  5) 峰值最大   (本机网卡 95%: ${def_spd} Mbps)" >&2
+  echo "  6) 自定义速率 (手动输入 Mbps)" >&2
+  read -rp "请选择 [1-6，直接回车推荐 300M (270)]: " choice >&2
+
+  case "$choice" in
+    1) echo "90" ;;
+    2|"") echo "270" ;;
+    3) echo "450" ;;
+    4) echo "900" ;;
+    5) echo "$def_spd" ;;
+    6)
+      read -rp "请输入自定义下发速率 (Mbps，如 200): " custom >&2
+      if echo "$custom" | grep -qE '^[0-9]+$' && [ "$custom" -gt 0 ]; then
+        echo "$custom"
+      else
+        echo "270"
+      fi
+      ;;
+    *)
+      if echo "$choice" | grep -qE '^[0-9]+$' && [ "$choice" -gt 0 ]; then
+        echo "$choice"
+      else
+        echo "270"
+      fi
+      ;;
+  esac
+}
+
 try_fallback_bbr() {
   modprobe tcp_bbr >/dev/null 2>&1 || true
   local avail_cc
@@ -4025,8 +4077,8 @@ EOF
 set_tcp_brutal_speed() {
   local mbps="${1:-}"
   if [ -z "$mbps" ] || [ "$mbps" = "auto" ]; then
-    mbps="$(get_default_brutal_speed_mbps)"
-    info "未指定速率，已自动设置为本机最大速度的 95%: ${mbps} Mbps"
+    mbps="$(choose_brutal_speed auto)"
+    info "下发速率已设置为: ${mbps} Mbps"
   fi
   init_tcp_brutal_service "$mbps"
 
@@ -4372,7 +4424,8 @@ cmd_brutal() {
     show|status|list|ls)
       local max_spd default_spd
       max_spd=$(get_machine_max_speed_mbps)
-      default_spd=$(get_default_brutal_speed_mbps)
+      default_spd=$(sed -n -E 's/^0\.0\.0\.0\/0[[:space:]]+([0-9]+).*/\1/p' "$TCP_BRUTAL_RULES_FILE" 2>/dev/null | head -1)
+      [ -n "$default_spd" ] || default_spd=$(get_default_brutal_speed_mbps)
       echo ""
       echo -e "${CYAN}=== TCP Brutal 状态 ===${NC}"
       if lsmod | grep -qw brutal; then
@@ -4380,8 +4433,16 @@ cmd_brutal() {
       else
         echo -e "  内核模块:       ${RED}未加载${NC}"
       fi
-      echo -e "  本机最大带宽:   ${GREEN}${max_spd} Mbps${NC}"
-      echo -e "  默认下发速率:   ${GREEN}${default_spd} Mbps (本机最大带宽 95%)${NC}"
+      if [ -s "$SB_HOME/hybw" ]; then
+        echo -e "  Hysteria2 Brutal: ${GREEN}已启用 ($(cat "$SB_HOME/hybw" | awk '{print "客户端上行 "$1"M / 下行 "$2"M"}'))${NC}"
+      else
+        echo -e "  Hysteria2 Brutal: ${YELLOW}未配置专属限额 (使用原生自适应 BBR)${NC}"
+      fi
+      echo -e "  本机网卡规格:   ${GREEN}${max_spd} Mbps${NC}"
+      echo -e "  当前 Brutal 速率: ${GREEN}${default_spd} Mbps${NC}"
+      if [ "$default_spd" -gt 1500 ]; then
+        echo -e "  ${YELLOW}提示：Brutal 属固定速率发包；若远超客户端宽带会引发严重丢包，推荐对齐实际宽带 (如 300M)：sbbox brutal speed 300${NC}"
+      fi
       echo ""
       echo -e "${CYAN}=== 当前 Brutal 规则与实时连接 ===${NC}"
       if command -v brutalctl >/dev/null 2>&1; then
@@ -4390,12 +4451,57 @@ cmd_brutal() {
         echo "  未安装 brutalctl（执行 sbbox brutal on 自动安装）"
       fi
       echo ""
+
+      local _rlocks
+      _rlocks=$(ip route show 2>/dev/null | grep -E 'congctl[[:space:]]+lock')
+      if [ -n "$_rlocks" ]; then
+        echo -e "${YELLOW}=== 路由级 congctl lock（按目的地强制 CC，会覆盖入站分工）===${NC}"
+        echo "$_rlocks" | sed 's/^/  /'
+        echo -e "  ${YELLOW}提示：该锁对目的地的所有 TCP 连接生效，不区分是否代理流量；${NC}"
+        echo -e "  ${YELLOW}      如需移除，用 sbbox brutal del <prefix> 移除。${NC}"
+        echo ""
+      fi
+
+      echo -e "${CYAN}=== 在线连接实际 CC 分布与重传率 ===${NC}"
+      local _cc_stat
+      _cc_stat=$(ss -tin state established 2>/dev/null | awk '
+        /^[[:space:]]/ {
+          cc=""
+          for (i=1; i<=NF; i++)
+            if ($i=="bbr" || $i=="brutal" || $i=="cubic" || $i=="reno") { cc=$i; break }
+          if (cc=="") next
+          s=0; r=0
+          for (i=1; i<=NF; i++) {
+            if ($i ~ /^bytes_sent:/)    { t=$i; sub(/^bytes_sent:/,"",t);    s=t+0 }
+            if ($i ~ /^bytes_retrans:/) { t=$i; sub(/^bytes_retrans:/,"",t); r=t+0 }
+          }
+          n[cc]++; sent[cc]+=s; ret[cc]+=r
+        }
+        END {
+          for (c in n) {
+            p = sent[c]>0 ? ret[c]*100.0/sent[c] : 0
+            printf "  %-7s 连接 %-4d 发送 %8.1f MB  重传 %7.1f MB (%.1f%%)\n", c, n[c], sent[c]/1048576, ret[c]/1048576, p
+          }
+        }')
+      if [ -n "$_cc_stat" ]; then
+        echo "$_cc_stat"
+        echo -e "  ${YELLOW}注：CC 在连接建立时确定，改了规则后需客户端重连才会切换。${NC}"
+      else
+        echo "  (当前无已建立的 TCP 连接)"
+      fi
+      echo ""
       ;;
     on)
-      local mbps="${1:-auto}"
+      local mbps="${1:-}"
+      if [ -z "$mbps" ] || [ "$mbps" = "auto" ]; then
+        mbps="$(choose_brutal_speed auto)"
+      fi
       ensure_tcp_brutal
       set_tcp_brutal_speed "$mbps"
-      info "TCP Brutal 已成功启用"
+      info "TCP Brutal 已成功启用（下发速率: ${mbps} Mbps）"
+      if [ -s "$SB_HOME/hybw" ]; then
+        info "提示：Hysteria 2 原生 Brutal 带宽为 $(cat "$SB_HOME/hybw")，如需调整可使用 sbbox speed <上行> <下行>"
+      fi
       ;;
     off)
       if command -v brutalctl >/dev/null 2>&1; then
@@ -4407,7 +4513,10 @@ cmd_brutal() {
       info "TCP Brutal 规则已清空并关闭"
       ;;
     speed)
-      local mbps="${1:-auto}"
+      local mbps="${1:-}"
+      if [ -z "$mbps" ] || [ "$mbps" = "auto" ]; then
+        mbps="$(choose_brutal_speed auto)"
+      fi
       ensure_tcp_brutal
       set_tcp_brutal_speed "$mbps"
       ;;
