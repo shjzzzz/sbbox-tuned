@@ -2635,10 +2635,8 @@ class SubHandler(BaseHTTPRequestHandler):
             if os.path.isfile(clash_file):
                 with open(clash_file, "r", encoding="utf-8", errors="ignore") as f:
                     content_str = f.read()
-                # 兼容隔离：仅对纯原版非 Meta Clash 客户端容错清洗 anytls；Mihomo/Meta/Stash 等原生支持客户端保留
-                is_meta = any(k in ua for k in ("mihomo", "meta", "stash", "sing", "verge", "flclash")) or "anytls=1" in q_lower or "meta=1" in q_lower
-                if not is_meta:
-                    content_str = sanitize_clash_yaml(content_str)
+                # AnyTLS 进入全部订阅（含原版 Clash）。原版 Clash 不认识 anytls 类型，可能拒绝加载整份配置；
+                # 不再做 sanitize_clash_yaml 清洗。需要剔除时由客户端自行删除该节点。
                 content = content_str.encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/yaml; charset=utf-8")
