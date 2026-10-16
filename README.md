@@ -1,6 +1,6 @@
 # New-sing-box-naiveproxy-tuic-hy2-tuning — Sing-box 2026 协议安全加固代理脚本
 
-[![validate](https://github.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/actions/workflows/validate.yml/badge.svg)](https://github.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/actions/workflows/validate.yml)
+[![validate](https://github.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/actions/workflows/validate.yml/badge.svg)](https://github.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/actions/workflows/validate.yml)
 
 **语言：** **简体中文** · [English](./README.en.md)
 
@@ -18,7 +18,7 @@
 > 默认使用 **官方正式版内核（stable）**，默认开启 **QUIC 与 BBR 拥塞控制**，入站最低兼容 **TLS 1.2 / HTTP 1.1**。
 
 集成了：
-- **内核级流控调优**（移植自 [`ShjChow26/Xray-core-xhttp-cdn-tuned`](https://github.com/ShjChow26/Xray-core-xhttp-cdn-tuned) 的 `xh tuning on`）：BBR、内存分档缓冲区、TFO、文件句柄等，安装期自动开启，可一键回滚
+- **内核级流控调优**（移植自 [`shjzzzz/Xray-core-xhttp-cdn-tuned`](https://github.com/shjzzzz/Xray-core-xhttp-cdn-tuned) 的 `xh tuning on`）：BBR、内存分档缓冲区、TFO、文件句柄等，安装期自动开启，可一键回滚
 - **acme.sh 证书申请**：Naiveproxy / Hysteria2 / Tuic 使用真实 TLS 证书
 - **OpenSSL 动态指纹与 SHA-256 锁定**：安装时自动通过 OpenSSL 提取证书的 HEX 指纹（`pcs`）、DER SHA256（`pinSHA256`）与 SPKI 公钥 Base64，默认注入 Tuic / Hysteria2 / Naive 节点及客户端配置，防中间人劫持
 
@@ -178,15 +178,15 @@ systemctl --failed                             # 有 205/LIMITS 就是踩了这�
 
 ```bash
 # 1. 默认四大主力梯队一键安装（含高速 Hysteria2 + NaiveProxy + Tuic + AnyTLS，需域名解析）：
-bash <(curl -Ls https://raw.githubusercontent.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) \
+bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) \
   alns=1 ym=your.domain.com
 
 # 2. 全协议完整安装（四大主力 + 兼容旧客户端的 VLESS-Reality）：
-bash <(curl -Ls https://raw.githubusercontent.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) \
+bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) \
   reap=1 alns=1 ym=your.domain.com
 
 # 3. 无域名极速安装（含 Hysteria2 + Tuic，自签证书 + SHA256 指纹固定，免域名）：
-bash <(curl -Ls https://raw.githubusercontent.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh)
 ```
 
 > `alns=1` 时 acme.sh 走 standalone 模式，需要 **80 端口空闲**、域名 A 记录已解析到本机。

@@ -1,6 +1,6 @@
 # New-sing-box-naiveproxy-tuic-hy2-tuning — Sing-box 2026 Secure Proxy Script
 
-[![validate](https://github.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/actions/workflows/validate.yml/badge.svg)](https://github.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/actions/workflows/validate.yml)
+[![validate](https://github.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/actions/workflows/validate.yml/badge.svg)](https://github.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/actions/workflows/validate.yml)
 
 **Language:** [简体中文](./README.md) · **English**
 
@@ -18,7 +18,7 @@ A **sing-box 1.14 single-core** deployment script, covering the 2026 protocol ti
 > Defaults to the **official stable core (`stable`, since v2.7.34)**, with **QUIC and BBR congestion control** enabled by default, and backward compatibility down to **TLS 1.2 / HTTP 1.1**.
 
 Bundled with:
-- **Kernel-level flow tuning** (ported from the `xh tuning on` of [`ShjChow26/Xray-core-xhttp-cdn-tuned`](https://github.com/ShjChow26/Xray-core-xhttp-cdn-tuned)): BBR, memory-tiered buffers, TCP Fast Open, file-handle limits — applied automatically at install, one-command rollback
+- **Kernel-level flow tuning** (ported from the `xh tuning on` of [`shjzzzz/Xray-core-xhttp-cdn-tuned`](https://github.com/shjzzzz/Xray-core-xhttp-cdn-tuned)): BBR, memory-tiered buffers, TCP Fast Open, file-handle limits — applied automatically at install, one-command rollback
 - **acme.sh certificate issuance**: real TLS certificates for Naiveproxy / Hysteria2 / Tuic
 - **OpenSSL Dynamic Fingerprinting & SHA-256 Pinning**: automatically extracts the active certificate's HEX fingerprint (`pcs`), DER SHA-256 (`pinSHA256`), and SPKI public key Base64 via OpenSSL during install, injecting them into Tuic / Hysteria2 / Naiveproxy configs to prevent MITM attacks
 
@@ -167,15 +167,15 @@ Main process exited, code=exited, status=205/LIMITS
 
 ```bash
 # 1. Default Four Core Pillars Installation (High-speed Hysteria2 + NaiveProxy + Tuic + AnyTLS, requires domain):
-bash <(curl -Ls https://raw.githubusercontent.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) \
+bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) \
   alns=1 ym=your.domain.com
 
 # 2. Full Protocol Installation (Four Core Pillars + Legacy-compatible VLESS-Reality):
-bash <(curl -Ls https://raw.githubusercontent.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) \
+bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) \
   reap=1 alns=1 ym=your.domain.com
 
 # 3. No-Domain Fast Installation (Hysteria2 + Tuic, self-signed cert + SHA256 pinning, no domain needed):
-bash <(curl -Ls https://raw.githubusercontent.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh)
 ```
 
 > `alns=1` uses acme.sh in standalone mode, requiring **port 80 to be free** and the domain's A record resolved to this host.
