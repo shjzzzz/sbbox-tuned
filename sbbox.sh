@@ -46,8 +46,8 @@ SYSCTL_CONF="/etc/sysctl.d/99-sbbox.conf"
 LIMITS_CONF="/etc/security/limits.d/99-sbbox.conf"
 SB_SERVICE="sbbox"
 SB_SEC_DIR="$SB_HOME/sec"
-SBBOX_VERSION="v2.7.68"
-SB_URL="https://raw.githubusercontent.com/ShJChow/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh"
+SBBOX_VERSION="v2.7.69"
+SB_URL="https://raw.githubusercontent.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh"
 # root 装到 /usr/local/bin（始终在 PATH 中）；非 root 退回 ~/bin
 if [ "$(id -u 2>/dev/null)" = "0" ] && [ -d /usr/local/bin ]; then
   SB_BINDIR="/usr/local/bin"
@@ -209,9 +209,9 @@ showmode() {
   echo "==========================================================="
   echo "sbbox $SBBOX_VERSION — Sing-box-Only 协议安全加固代理脚本"
   echo "支持协议（2026梯队）：Hysteria2 / Naiveproxy / Tuic / AnyTLS（可选：VLESS-Reality）"
-  echo "默认四大主力（Hysteria2/Naive/TUIC/AnyTLS）：bash <(curl -Ls https://raw.githubusercontent.com/ShJChow/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) alns=1 ym=你的域名"
-  echo "指定协议（三大主力）：bash <(curl -Ls https://raw.githubusercontent.com/ShJChow/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) hyp=1 nvp=1 tup=1 alns=1 ym=你的域名"
-  echo "全协议（含 Reality）：bash <(curl -Ls https://raw.githubusercontent.com/ShJChow/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) reap=1 alns=1 ym=你的域名"
+  echo "默认四大主力（Hysteria2/Naive/TUIC/AnyTLS）：bash <(curl -Ls https://raw.githubusercontent.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) alns=1 ym=你的域名"
+  echo "指定协议（三大主力）：bash <(curl -Ls https://raw.githubusercontent.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) hyp=1 nvp=1 tup=1 alns=1 ym=你的域名"
+  echo "全协议（含 Reality）：bash <(curl -Ls https://raw.githubusercontent.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) reap=1 alns=1 ym=你的域名"
   echo "管理菜单：sbbox（终端中直接输入）【或】 sbbox menu"
   echo "云端放行端口清单：sbbox ports（连不上但本机自检正常时，先核对云厂商安全组）"
   echo "协议开关：sbbox proto show | sbbox proto reality on|off（默认安装四大主力，VLESS-Reality 等备用协议在此开关）"
@@ -2357,8 +2357,22 @@ gen_client() {
     echo "$rea_link"; echo
   fi
 
+  # 6. Nowhere (上下行分流抗QoS / 常用稳定双模式)
+  if [ -s "$SB_HOME/port_nw" ] && [ -s "$SB_HOME/nw_key" ]; then
+    local nw_p nw_k nw_pin_val
+    nw_p=$(cat "$SB_HOME/port_nw")
+    nw_k=$(cat "$SB_HOME/nw_key")
+    nw_pin_val=$(cat "$SB_HOME/nw_pin" 2>/dev/null || echo "$_sha")
+    local nw_hs_link="nowhere://$nw_k@$add:$nw_p?sni=$sni&up=tcp&down=udp&morph=1&pin=$nw_pin_val#Nowhere-Split-HighSpeed"
+    local nw_tcp_link="nowhere://$nw_k@$add:$nw_p?sni=$sni&net=tcp&up=tcp&down=tcp&morph=1&pin=$nw_pin_val#Nowhere-Common-TCP"
+    echo "$nw_hs_link" >> "$SB_LINK"
+    echo "$nw_tcp_link" >> "$SB_LINK"
+    echo "💣【 ⚡ Nowhere (上下行分流抗QoS / 全TCP稳定) 】节点信息如下："
+    echo "$nw_hs_link"
+    echo "$nw_tcp_link"; echo
+  fi
 
-  # ---------- sing-box 客户端聚合配置 ----------
+
   gen_client_sbox
   # ---------- Clash / Mihomo 聚合配置 ----------
   gen_client_clash
@@ -3569,6 +3583,9 @@ sbrestart() {
   if [ "$SERVICE_TYPE" = "systemd" ] && [ "$IS_ROOT" = 1 ]; then
     systemctl restart ${SB_SERVICE} >/dev/null 2>&1
     hy2_external_restart
+    if systemctl is-active sbbox-nowhere >/dev/null 2>&1 || [ -f "$SB_HOME/port_nw" ]; then
+      systemctl restart sbbox-nowhere >/dev/null 2>&1 || true
+    fi
   elif [ "$SERVICE_TYPE" = "openrc" ] && [ "$IS_ROOT" = 1 ]; then
     rc-service sing-box restart >/dev/null 2>&1
   else
@@ -5129,10 +5146,15 @@ status_show() {
       echo -e "hysteria-sbbox: ${RED}未运行${NC}"
     fi
   fi
+  if systemctl is-active sbbox-nowhere >/dev/null 2>&1; then
+    echo -e "sbbox-nowhere: ${GREEN}运行中 (Nowhere 3.0.0 混合中继)${NC}"
+  elif [ -f "$SB_HOME/port_nw" ]; then
+    echo -e "sbbox-nowhere: ${RED}未运行${NC}"
+  fi
   echo ""
   if command -v ss >/dev/null 2>&1; then
     echo -e "${CYAN}[+] 监听端口${NC}"
-    ss -tulnp 2>/dev/null | grep -E 'sing-box|hysteria' || echo "  （未发现 sing-box/hysteria 监听）"
+    ss -tulnp 2>/dev/null | grep -E 'sing-box|hysteria|nowhere' || echo "  （未发现 sing-box/hysteria/nowhere 监听）"
   fi
   local api_p
   api_p=$(cat "$SB_HOME/api_port" 2>/dev/null)
@@ -6059,6 +6081,13 @@ cert_mgmt() {
         return 0
       fi
       info "证书已更新：${_before:0:16}… → ${_after:0:16}…"
+      if [ -f "$SB_HOME/nw_pin" ] && [ -n "$_after" ]; then
+        echo "$_after" > "$SB_HOME/nw_pin"
+        if [ -f "$SB_HOME/nowhere.env" ]; then
+          sed -i "s/^NOWHERE_PIN=.*/NOWHERE_PIN=$_after/" "$SB_HOME/nowhere.env"
+        fi
+        systemctl restart sbbox-nowhere >/dev/null 2>&1 || true
+      fi
       sbrestart
       hy2_external_restart
       gen_client

@@ -1,6 +1,6 @@
 # New-sing-box-naiveproxy-tuic-hy2-tuning — Sing-box 2026 协议安全加固代理脚本
 
-[![validate](https://github.com/ShJChow/New-sing-box-naiveproxy-tuic-hy2-tuning/actions/workflows/validate.yml/badge.svg)](https://github.com/ShJChow/New-sing-box-naiveproxy-tuic-hy2-tuning/actions/workflows/validate.yml)
+[![validate](https://github.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/actions/workflows/validate.yml/badge.svg)](https://github.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/actions/workflows/validate.yml)
 
 **语言：** **简体中文** · [English](./README.en.md)
 
@@ -13,11 +13,12 @@
 | 🥉 **QUIC 备选** | **TUIC v5** | 低延迟 UDP 加速 / 标准 QUIC 0-RTT | QUIC (H3) | 真实证书 / 自签+指纹固定 |
 | 💣 **TCP 主力** | **AnyTLS** | 彻底消除 TLS-in-TLS 特征 / 0-RTT 会话池 | TCP + TLS 1.3 + 自适应 8 级填充 Padding | **强制真实证书** |
 | 5 **兼容老客户端 (可选)** | **VLESS-Reality** | 全客户端直连兼容（免域名免证书；按需显式传 `reap=1` 开启） | TCP (XTLS Vision) | **免域名 / 免证书（借用官方 SNI）** |
+| 6 **抗 QoS 高速 (自研/可选)** | **Nowhere** | 上下行独立传输分流（上行 TCP 避 QoS、下行 QUIC 极速大吞吐） | TLS/QUIC 混合中继 + Morph 掩码 | **真实证书 / SHA-256 Pin** |
 
 > 默认使用 **官方正式版内核（stable）**，默认开启 **QUIC 与 BBR 拥塞控制**，入站最低兼容 **TLS 1.2 / HTTP 1.1**。
 
 集成了：
-- **内核级流控调优**（移植自 [`ShJChow/Xray-core-xhttp-cdn-tuned`](https://github.com/ShJChow/Xray-core-xhttp-cdn-tuned) 的 `xh tuning on`）：BBR、内存分档缓冲区、TFO、文件句柄等，安装期自动开启，可一键回滚
+- **内核级流控调优**（移植自 [`ShjChow26/Xray-core-xhttp-cdn-tuned`](https://github.com/ShjChow26/Xray-core-xhttp-cdn-tuned) 的 `xh tuning on`）：BBR、内存分档缓冲区、TFO、文件句柄等，安装期自动开启，可一键回滚
 - **acme.sh 证书申请**：Naiveproxy / Hysteria2 / Tuic 使用真实 TLS 证书
 - **OpenSSL 动态指纹与 SHA-256 锁定**：安装时自动通过 OpenSSL 提取证书的 HEX 指纹（`pcs`）、DER SHA256（`pinSHA256`）与 SPKI 公钥 Base64，默认注入 Tuic / Hysteria2 / Naive 节点及客户端配置，防中间人劫持
 
@@ -177,15 +178,15 @@ systemctl --failed                             # 有 205/LIMITS 就是踩了这�
 
 ```bash
 # 1. 默认四大主力梯队一键安装（含高速 Hysteria2 + NaiveProxy + Tuic + AnyTLS，需域名解析）：
-bash <(curl -Ls https://raw.githubusercontent.com/ShJChow/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) \
+bash <(curl -Ls https://raw.githubusercontent.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) \
   alns=1 ym=your.domain.com
 
 # 2. 全协议完整安装（四大主力 + 兼容旧客户端的 VLESS-Reality）：
-bash <(curl -Ls https://raw.githubusercontent.com/ShJChow/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) \
+bash <(curl -Ls https://raw.githubusercontent.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) \
   reap=1 alns=1 ym=your.domain.com
 
 # 3. 无域名极速安装（含 Hysteria2 + Tuic，自签证书 + SHA256 指纹固定，免域名）：
-bash <(curl -Ls https://raw.githubusercontent.com/ShJChow/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/ShjChow26/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh)
 ```
 
 > `alns=1` 时 acme.sh 走 standalone 模式，需要 **80 端口空闲**、域名 A 记录已解析到本机。
