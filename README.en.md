@@ -1,6 +1,6 @@
-# New-sing-box-naiveproxy-tuic-hy2-tuning — Sing-box 2026 Secure Proxy Script
+# sbbox-tuned — Sing-box 2026 Secure Proxy Script
 
-[![validate](https://github.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/actions/workflows/validate.yml/badge.svg)](https://github.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/actions/workflows/validate.yml)
+[![validate](https://github.com/shjzzzz/sbbox-tuned/actions/workflows/validate.yml/badge.svg)](https://github.com/shjzzzz/sbbox-tuned/actions/workflows/validate.yml)
 
 **Language:** [简体中文](./README.md) · **English**
 
@@ -167,15 +167,15 @@ Main process exited, code=exited, status=205/LIMITS
 
 ```bash
 # 1. Default Four Core Pillars Installation (High-speed Hysteria2 + NaiveProxy + Tuic + AnyTLS, requires domain):
-bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) \
+bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/sbbox-tuned/main/sbbox.sh) \
   alns=1 ym=your.domain.com
 
 # 2. Full Protocol Installation (Four Core Pillars + Legacy-compatible VLESS-Reality):
-bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) \
+bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/sbbox-tuned/main/sbbox.sh) \
   reap=1 alns=1 ym=your.domain.com
 
 # 3. No-Domain Fast Installation (Hysteria2 + Tuic, self-signed cert + SHA256 pinning, no domain needed):
-bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/sbbox-tuned/main/sbbox.sh)
 ```
 
 > `alns=1` uses acme.sh in standalone mode, requiring **port 80 to be free** and the domain's A record resolved to this host.

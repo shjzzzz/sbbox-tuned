@@ -1,6 +1,6 @@
-# New-sing-box-naiveproxy-tuic-hy2-tuning — Sing-box 2026 协议安全加固代理脚本
+# sbbox-tuned — Sing-box 2026 协议安全加固代理脚本
 
-[![validate](https://github.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/actions/workflows/validate.yml/badge.svg)](https://github.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/actions/workflows/validate.yml)
+[![validate](https://github.com/shjzzzz/sbbox-tuned/actions/workflows/validate.yml/badge.svg)](https://github.com/shjzzzz/sbbox-tuned/actions/workflows/validate.yml)
 
 **语言：** **简体中文** · [English](./README.en.md)
 
@@ -178,15 +178,15 @@ systemctl --failed                             # 有 205/LIMITS 就是踩了这�
 
 ```bash
 # 1. 默认四大主力梯队一键安装（含高速 Hysteria2 + NaiveProxy + Tuic + AnyTLS，需域名解析）：
-bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) \
+bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/sbbox-tuned/main/sbbox.sh) \
   alns=1 ym=your.domain.com
 
 # 2. 全协议完整安装（四大主力 + 兼容旧客户端的 VLESS-Reality）：
-bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh) \
+bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/sbbox-tuned/main/sbbox.sh) \
   reap=1 alns=1 ym=your.domain.com
 
 # 3. 无域名极速安装（含 Hysteria2 + Tuic，自签证书 + SHA256 指纹固定，免域名）：
-bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/New-sing-box-naiveproxy-tuic-hy2-tuning/main/sbbox.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/sbbox-tuned/main/sbbox.sh)
 ```
 
 > `alns=1` 时 acme.sh 走 standalone 模式，需要 **80 端口空闲**、域名 A 记录已解析到本机。
