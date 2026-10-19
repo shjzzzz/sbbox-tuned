@@ -1243,7 +1243,7 @@ apply_tuning() {
   try_sysctl net.ipv4.tcp_wmem "4096 65536 ${TCP_MEM_MAX}"
   try_sysctl net.ipv4.tcp_limit_output_bytes 4194304
   try_sysctl net.ipv4.tcp_adv_win_scale 1
-  try_sysctl net.ipv4.tcp_autocorking 1
+  try_sysctl net.ipv4.tcp_autocorking 0
   try_sysctl net.ipv4.tcp_comp_sack_nr 44
   try_sysctl net.ipv4.tcp_comp_sack_delay_ns 1000000
   try_sysctl net.ipv4.tcp_mem "$(( MEM_PAGES * 4 / 100 )) $(( MEM_PAGES * 6 / 100 )) $(( MEM_PAGES * 8 / 100 ))"
@@ -1271,7 +1271,7 @@ apply_tuning() {
   try_sysctl net.ipv4.tcp_max_syn_backlog "$NETDEV_BACKLOG"
   try_sysctl net.ipv4.tcp_max_tw_buckets 65536
   try_sysctl net.ipv4.ip_local_port_range "1024 65535"
-  try_sysctl net.ipv4.ip_local_reserved_ports "8001,8003,8443,8445,8446,10489,10800-10809,11801-11806,18793,23106,27295,28443"
+  try_sysctl net.ipv4.ip_local_reserved_ports "8001,8002,8003,8443,8445,8446,8447,13547,17781,18448,19142,27668,27802,28443,29390,38969"
 
   # conntrack 仅在模块已加载时调整。
   # 开机时 systemd-sysctl 早于 iptables / Docker 加载 nf_conntrack，键还不存在就被静默跳过，
@@ -1286,23 +1286,16 @@ apply_tuning() {
 
   # ---------- 连接建立与保持 ----------
   try_sysctl net.ipv4.tcp_fastopen 3
-  try_sysctl net.ipv4.tcp_mtu_probing 1
+  try_sysctl net.ipv4.tcp_mtu_probing 0
   try_sysctl net.ipv4.tcp_slow_start_after_idle 0
   # 不缓存上条连接的 cwnd/ssthresh：跨境链路抖动大，缓存下来的坏指标会让
   # 后续新连接一开始就被压在低速率上
   try_sysctl net.ipv4.tcp_no_metrics_save 1
-  try_sysctl net.ipv4.tcp_notsent_lowat 262144
+  try_sysctl net.ipv4.tcp_notsent_lowat 524288
   try_sysctl net.ipv4.tcp_syncookies 1
   try_sysctl net.ipv4.tcp_tw_reuse 1
-  # tcp_ecn = 1（v2.5.1）：主动发起 ECN 协商，而不是只被动应答（旧值 2）。
-  # 实测 7 个对端里 6 个接受（Cloudflare / GitHub / Bing / Microsoft / 1.1.1.1 /
-  # 9.9.9.9），只有 Google 拒绝，无一例连接失败。
-  # 但本机 bbr 是 **BBRv1**，其控制环路不消费 ECN 标记，实测开关两态在首字节
-  # 与吞吐上均无可测差异。设成 1 是为将来换 ECN 敏感的拥塞控制预留协商能力。
-  # 与同机 Xray 项目保持一致（两者都写 /etc/sysctl.d/，文件名排序后写者胜，
-  # 值不一致会导致实际生效值取决于文件名而不是任一项目的预期）。
-  try_sysctl net.ipv4.tcp_ecn 1
-  try_sysctl net.ipv4.tcp_ecn_fallback 1
+  try_sysctl net.ipv4.tcp_ecn 0
+  try_sysctl net.ipv4.tcp_ecn_fallback 0
   # fs.suid_dumpable = 0：setuid / 中途切换过身份的进程崩溃时不产生 core dump。
   # 代理进程内存里有私钥、UUID、解密后的流量，默认值 2（suidsafe）仍会 dump 到 core_pattern 指定处；
   # 0 则一律不 dump。配合 limits.conf 的 `* hard core 0` 与 core_pattern = core。
@@ -1739,8 +1732,8 @@ installsb() {
   if [ "$dns_optimistic" != "0" ]; then
     dns_block='    "dns": {
         "servers": [
-            { "type": "tls", "tag": "dns-secure", "server": "9.9.9.10" },
-            { "type": "tls", "tag": "dns-backup", "server": "1.1.1.1" },
+            { "type": "udp", "tag": "dns-secure", "server": "1.1.1.1" },
+            { "type": "udp", "tag": "dns-backup", "server": "9.9.9.10" },
             { "type": "https", "tag": "dns-doh", "server": "1.1.1.1" },
             { "type": "local", "tag": "dns-local", "detour": "direct" }
         ],
@@ -1753,8 +1746,8 @@ installsb() {
   else
     dns_block='    "dns": {
         "servers": [
-            { "type": "tls", "tag": "dns-secure", "server": "9.9.9.10" },
-            { "type": "tls", "tag": "dns-backup", "server": "1.1.1.1" },
+            { "type": "udp", "tag": "dns-secure", "server": "1.1.1.1" },
+            { "type": "udp", "tag": "dns-backup", "server": "9.9.9.10" },
             { "type": "https", "tag": "dns-doh", "server": "1.1.1.1" },
             { "type": "local", "tag": "dns-local", "detour": "direct" }
         ],
@@ -2077,15 +2070,15 @@ EOF
   # 必须先 resolve 再判私有地址：ip_is_private 只比对目标 IP，
   # 客户端若把目标写成域名（如 127.0.0.1.nip.io、指向 169.254.169.254 的域名），
   # 规则不匹配即被放行。resolve action 先把域名解析成 IP，拦截才真正生效。
-  local route_rules="            { \"action\": \"resolve\", \"strategy\": \"$sb_strategy\", \"server\": \"dns-secure\" },
-            { \"action\": \"reject\", \"ip_is_private\": true }"
+  local route_rules=""
   case "$blkport" in
     0|no|off|false) : ;;
-    *) route_rules="$route_rules,
-            { \"action\": \"reject\", \"port\": [ 25, 135, 137, 138, 139, 445, 465, 587 ] }" ;;
+    *) route_rules="            { \"action\": \"reject\", \"port\": [ 25, 135, 137, 138, 139, 445, 465, 587 ] },
+" ;;
   esac
-  route_rules="$route_rules,
-            { \"action\": \"reject\", \"protocol\": [ \"bittorrent\" ] }"
+  route_rules="${route_rules}            { \"action\": \"reject\", \"protocol\": [ \"bittorrent\" ] },
+            { \"action\": \"resolve\", \"strategy\": \"$sb_strategy\", \"server\": \"dns-secure\" },
+            { \"action\": \"reject\", \"ip_is_private\": true }"
   # 可选：屏蔽回国 IP / 广告域名（默认关闭）。规则集先下载到本地，失败则跳过该项，不写出坏配置。
   local route_rule_set="" _bk
   for _bk in cn ads; do
@@ -3544,9 +3537,18 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 EOF
+    if [ -f /etc/systemd/system/sbbox-nowhere.service ]; then
+      sed -i '/^PartOf=sbbox.service$/d' /etc/systemd/system/sbbox-nowhere.service 2>/dev/null || true
+    fi
     systemctl daemon-reload >/dev/null 2>&1
     systemctl enable ${SB_SERVICE} >/dev/null 2>&1
     systemctl restart ${SB_SERVICE} >/dev/null 2>&1
+    if [ -s "$SB_HOME/port_nw" ] && [ -f /etc/systemd/system/sbbox-nowhere.service ]; then
+      local _nw_p; _nw_p=$(cat "$SB_HOME/port_nw" 2>/dev/null)
+      [ -n "$_nw_p" ] && { open_port "$_nw_p" tcp; open_port "$_nw_p" udp; }
+      systemctl enable sbbox-nowhere >/dev/null 2>&1 || true
+      systemctl restart sbbox-nowhere >/dev/null 2>&1 || true
+    fi
   elif [ "$SERVICE_TYPE" = "openrc" ] && [ "$IS_ROOT" = 1 ]; then
     cat > /etc/init.d/sing-box <<EOF
 #!/sbin/openrc-run
