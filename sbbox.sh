@@ -779,6 +779,12 @@ install_cert() {
   [ -z "$ym" ] && return 1
 
   # 1. 优先复用本机已存在的任何针对 $ym 的有效证书
+  valid_cert() {
+    local c="$1"
+    [ -s "$c" ] || return 1
+    openssl x509 -in "$c" -noout -issuer 2>/dev/null | grep -qi "staging" && return 1
+    return 0
+  }
   local found_cert="" found_key=""
   local cand_ecc="$HOME/.acme.sh/${ym}_ecc"
   local cand_rsa="$HOME/.acme.sh/${ym}"
@@ -787,9 +793,9 @@ install_cert() {
   local cand_xhttp="/etc/xhttp-cdn"
   local cand_ssl="/etc/ssl/private"
 
-  if [ -f "$cand_ecc/fullchain.cer" ] && [ -f "$cand_ecc/${ym}.key" ]; then
+  if [ -f "$cand_ecc/fullchain.cer" ] && [ -f "$cand_ecc/${ym}.key" ] && valid_cert "$cand_ecc/fullchain.cer"; then
     found_cert="$cand_ecc/fullchain.cer"; found_key="$cand_ecc/${ym}.key"
-  elif [ -f "$cand_rsa/fullchain.cer" ] && [ -f "$cand_rsa/${ym}.key" ]; then
+  elif [ -f "$cand_rsa/fullchain.cer" ] && [ -f "$cand_rsa/${ym}.key" ] && valid_cert "$cand_rsa/fullchain.cer"; then
     found_cert="$cand_rsa/fullchain.cer"; found_key="$cand_rsa/${ym}.key"
   elif [ -f "$cand_ssl/fullchain.cer" ] && [ -f "$cand_ssl/private.key" ] && openssl x509 -in "$cand_ssl/fullchain.cer" -noout -subject -ext subjectAltName 2>/dev/null | grep -Fq "$ym"; then
     found_cert="$cand_ssl/fullchain.cer"; found_key="$cand_ssl/private.key"
