@@ -4927,8 +4927,22 @@ try:
         data=json.dumps({'key': pub_b64, 'type': 'Android', 'locale': 'zh_CN'}).encode(),
         headers={'Content-Type': 'application/json', 'User-Agent': 'okhttp/3.12.1'}
     )
-    with urllib.request.urlopen(req, timeout=12) as r:
-        resp = json.loads(r.read().decode())
+    resp = None
+    for ep in ['https://api.cloudflareclient.com/v0a2158/reg', 'https://api.cloudflareclient.com/v0a2405/reg', 'https://api.cloudflareclient.com/v0a3321/reg']:
+        try:
+            r_req = urllib.request.Request(
+                ep,
+                data=json.dumps({'key': pub_b64, 'type': 'Android', 'locale': 'zh_CN'}).encode(),
+                headers={'Content-Type': 'application/json', 'User-Agent': 'okhttp/3.12.1'}
+            )
+            with urllib.request.urlopen(r_req, timeout=12) as r:
+                resp = json.loads(r.read().decode())
+            if resp and resp.get('id'):
+                break
+        except Exception:
+            continue
+    if not resp:
+        raise RuntimeError('All Cloudflare WARP registration endpoints failed')
     cfg = resp.get('config', {})
     v6 = cfg.get('interface', {}).get('addresses', {}).get('v6', '')
     v4 = cfg.get('interface', {}).get('addresses', {}).get('v4', '172.16.0.2')
@@ -5116,15 +5130,107 @@ cmd_warp() {
         echo -e "  凭据文件:     $WARP_CONF (权限 0600)"
       fi
       ;;
-    rotate)
-      info "正在重新申请专属 WARP 账户凭据……"
+    rotate|update|up)
+      info "正在重新申请与更新专属 Cloudflare WARP 账户凭据……"
       ensure_warp_account 1
       if [ -s "$WARP_MODE_FILE" ]; then
         apply_warp_to_sb_conf "$(cat "$WARP_MODE_FILE")"
       fi
+      info "WARP 凭据与 WireGuard 出站已成功刷新！"
       ;;
     *)
-      echo "用法：sbbox warp on [ai|all] | off | status | rotate"
+      echo "用法：sbbox warp on [ai|all] | off | status | rotate | update"
+      ;;
+  esac
+}
+
+# ======================================================
+# Cloudflare Argo 隧道管理 (cloudflared)
+# ======================================================
+ARGO_BIN="/usr/local/bin/cloudflared"
+ARGO_SERVICE="cloudflared"
+
+argo_detect_arch() {
+  local arch
+  arch=$(uname -m)
+  case "$arch" in
+    x86_64|amd64) echo "amd64" ;;
+    aarch64|arm64) echo "arm64" ;;
+    armv7l|armhf) echo "arm" ;;
+    *) echo "" ;;
+  esac
+}
+
+cmd_argo_update() {
+  local arch
+  arch=$(argo_detect_arch)
+  [ -n "$arch" ] || { error "暂不支持当前 CPU 架构: $(uname -m)"; return 1; }
+  info "正在检测并下载 Cloudflare 官方最新 cloudflared (linux-$arch) 内核……"
+  local tmp
+  tmp=$(mktemp)
+  if curl -fsSL --max-time 120 "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}" -o "$tmp"; then
+    chmod +x "$tmp"
+    if "$tmp" --version >/dev/null 2>&1; then
+      mv -f "$tmp" "$ARGO_BIN"
+      chmod +x "$ARGO_BIN"
+      info "Cloudflare Argo 隧道 (cloudflared) 已成功更新至最新版：$($ARGO_BIN --version 2>/dev/null | head -1)"
+      systemctl is-active "$ARGO_SERVICE" >/dev/null 2>&1 && systemctl restart "$ARGO_SERVICE"
+      return 0
+    else
+      rm -f "$tmp"
+      error "下载的 cloudflared 二进制校验失败"
+      return 1
+    fi
+  else
+    rm -f "$tmp"
+    error "从 Cloudflare 官方 GitHub 下载 cloudflared 失败"
+    return 1
+  fi
+}
+
+cmd_argo() {
+  local action="${1:-status}"
+  shift || true
+  case "$action" in
+    status)
+      echo ""
+      echo -e "${CYAN}=== Cloudflare Argo 隧道 (cloudflared) 状态 ===${NC}"
+      if [ -x "$ARGO_BIN" ]; then
+        echo -e "  内核版本:     ${GREEN}$($ARGO_BIN --version 2>/dev/null | head -1)${NC}"
+      else
+        echo -e "  内核版本:     ${YELLOW}未安装 (运行 sbbox argo update 即可一键自动安装)${NC}"
+      fi
+      if systemctl is-active "$ARGO_SERVICE" >/dev/null 2>&1; then
+        echo -e "  隧道服务:     ${GREEN}运行中 (active)${NC}"
+      else
+        echo -e "  隧道服务:     ${YELLOW}未运行 (inactive)${NC}"
+      fi
+      ;;
+    update|up)
+      cmd_argo_update
+      ;;
+    token|run|on)
+      local token="${1:-}"
+      if [ -z "$token" ]; then
+        read -rp "请输入 Cloudflare Zero Trust Tunnel Token: " token
+      fi
+      [ -n "$token" ] || { error "Token 不能为空"; return 1; }
+      [ -x "$ARGO_BIN" ] || cmd_argo_update || return 1
+      info "正在配置并启动 Cloudflare Argo 隧道服务……"
+      "$ARGO_BIN" service install "$token" 2>/dev/null || true
+      systemctl daemon-reload
+      systemctl enable --now "$ARGO_SERVICE" 2>/dev/null || true
+      info "Cloudflare Argo 隧道服务已启动并设为开机自启！"
+      ;;
+    off|stop|disable)
+      info "正在停止并卸载 Cloudflare Argo 隧道服务……"
+      systemctl stop "$ARGO_SERVICE" 2>/dev/null || true
+      systemctl disable "$ARGO_SERVICE" 2>/dev/null || true
+      [ -x "$ARGO_BIN" ] && "$ARGO_BIN" service uninstall 2>/dev/null || true
+      info "Cloudflare Argo 隧道已停止"
+      ;;
+    *)
+      echo "用法：sbbox argo status | update | on [token] | off"
       ;;
   esac
 }
@@ -5527,7 +5633,7 @@ cmd_menu() {
     echo " 10) 证书管理 status / renew / sync / hook"
     echo " 11) 端口跳跃 hop"
     echo " 12) 更换端口 port"
-    echo " 13) WARP 出站解锁 on / off / status / rotate"
+    echo " 13) WARP 出站解锁 on / off / status / rotate / update"
     echo " 14) 外置 Hy2 检查 / 更新"
     echo " 15) 自检修复 doctor"
     echo " 16) 轮换全部凭据 rotate（需确认）"
@@ -5536,6 +5642,7 @@ cmd_menu() {
     echo " 19) 云端需放行的端口清单 ports"
     echo " 20) 节点本机自测 selftest（区分服务端问题与网络问题）"
     echo " 21) 协议开关 proto（默认四大主力之外的备用协议如 Reality 在这里开关）"
+    echo " 22) Cloudflare Argo 隧道 status / update / on / off"
     echo "  0) 退出"
     read -rp "请选择: " choice || break
     case "$choice" in
@@ -5551,7 +5658,7 @@ cmd_menu() {
       10) read -rp "  status / renew / sync / hook (默认 status): " a; ( cert_mgmt "${a:-status}" ) ;;
       11) read -rp "  端口范围 (如 25000:38000) 或 off: " a; ( cmd_hop $a ) ;;
       12) read -rp "  [tu] [hy2] [nv] [rea] [any] 端口，回车=自动分配: " a; ( cmd_port $a ) ;;
-      13) read -rp "  on / off / status / rotate (默认 status): " a; ( cmd_warp ${a:-status} ) ;;
+      13) read -rp "  on / off / status / rotate / update (默认 status): " a; ( cmd_warp ${a:-status} ) ;;
       14) read -rp "  check / update (默认 check): " a; ( cmd_hy2 "${a:-check}" ) ;;
       15) ( doctor ) ;;
       16) ( cmd_rotate ) ;;
@@ -5560,6 +5667,7 @@ cmd_menu() {
       19) ( load_state; cloud_ports_hint ) ;;
       20) ( cmd_selftest ) ;;
       21) read -rp "  show / <hy2|naive|tuic|reality|anytls> on|off: " a; ( cmd_proto ${a:-show} ) ;;
+      22) read -rp "  status / update / on / off (默认 status): " a; ( cmd_argo ${a:-status} ) ;;
       0|q|Q) break ;;
       *) warn "无效选择" ;;
     esac
@@ -5602,6 +5710,7 @@ main() {
     brutal) shift; cmd_brutal "$@"; exit ;;
     port)   shift; cmd_port "$@"; exit ;;
     warp)   shift; cmd_warp "$@"; exit ;;
+    argo)   shift; cmd_argo "$@"; exit ;;
     block)  shift; cmd_block "$@"; exit ;;
     doctor) doctor; exit ;;
     ports)  load_state; cloud_ports_hint; exit ;;
