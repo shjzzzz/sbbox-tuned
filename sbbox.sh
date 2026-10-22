@@ -635,11 +635,11 @@ load_secrets() {
   if [ ! -s "$f_sid" ]; then
     local sid=""
     if [ -x "$SB_BIN" ]; then
-      sid=$("$SB_BIN" generate rand --hex 8 2>/dev/null || true)
+      sid=$("$SB_BIN" generate rand --hex 4 2>/dev/null || true)
     elif command -v sing-box >/dev/null 2>&1; then
-      sid=$(sing-box generate rand --hex 8 2>/dev/null || true)
+      sid=$(sing-box generate rand --hex 4 2>/dev/null || true)
     fi
-    [ -n "$sid" ] || sid=$(openssl rand -hex 8 2>/dev/null || head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    [ -n "$sid" ] || sid=$(openssl rand -hex 4 2>/dev/null || head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')
     echo "$sid" > "$f_sid"
     chmod 600 "$f_sid" 2>/dev/null
   fi
