@@ -47,7 +47,37 @@ sbbox log             # Follow live connection and access logs
 sbbox cert sync       # Check certificate renewals and hot-reload SPKI pinning
 sbbox keepalive on    # Enable background self-healing daemon
 sbbox autoupdate on   # Enable weekly stable auto-updates
+sbbox warp status|update # View WARP outbound status and rotate WireGuard credentials
+sbbox argo status|update # Cloudflare Argo Tunnel status and 1-click kernel update
 ```
+
+---
+
+## 🔒 Cloudflare SSL/TLS Certificate Coordination
+
+Tailored certificate workflows with seamless local reuse:
+
+### Method A: Host Certificate Reuse (Recommended)
+If your VPS already runs the XHTTP / Nginx stack (or uses a 15-year Cloudflare Origin CA certificate), `sbbox` automatically detects `/etc/nginx/certs`, **reuses existing certificates, and extracts SPKI pins** without binding port 80.
+
+### Method B: Cloudflare DNS-01 API Token Auto-Renewal
+For standalone domains without port 80 access:
+1. Create an API Token in Cloudflare Dashboard with `Zone.DNS:Edit` permissions;
+2. Run `CF_Token="your_token" ~/.acme.sh/acme.sh --issue --dns dns_cf -d yourdomain.com`;
+3. Run `sbbox cert sync` to load new certs and hot-reload SPKI fingerprints and client subscriptions.
+
+---
+
+## ☁️ Cloudflare WARP & Argo Tunnel Management
+
+* **Cloudflare Argo Tunnel (`cloudflared`)**:
+  - `sbbox argo status`: Check installed `cloudflared` kernel version and systemd status;
+  - `sbbox argo update`: Download and update to the latest official release (built-in latest **`2026.10.3`**);
+  - `sbbox argo on <token>`: Configure Zero Trust Tunnel Token and register systemd daemon;
+  - `sbbox argo off`: Stop and disable Argo Tunnel.
+* **Cloudflare WARP Outbound & Streaming Unlock**:
+  - `sbbox warp status`: Check WireGuard credentials and assigned Cloudflare IPv6 outbound;
+  - `sbbox warp update`: Fetch/rotate fresh official WireGuard credentials to unlock OpenAI/ChatGPT/Claude/Netflix streaming and AI services.
 
 ---
 

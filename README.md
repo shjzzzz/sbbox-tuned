@@ -47,7 +47,37 @@ sbbox log             # 查看实时访问日志
 sbbox cert sync       # 证书轮换检查与 SPKI 指纹热重载
 sbbox keepalive on    # 开启后台智能保活自愈机制
 sbbox autoupdate on   # 开启每周内核自动安全平滑更新
+sbbox warp status|update # WARP 出站状态与 WireGuard 凭据轮换更新
+sbbox argo status|update # Cloudflare Argo 隧道状态与一键内核更新
 ```
+
+---
+
+## 🔒 Cloudflare 证书申请与协同复用 (SSL/TLS)
+
+套件提供与真实域名深度适配的证书方案，并支持与宿主机已有的 XHTTP / Nginx 证书无缝复用：
+
+### 方案 A：复用宿主机权威证书（推荐协同）
+若 VPS 已部署 XHTTP / Nginx 方案并申请过证书（或使用 Cloudflare Origin CA 15 年证书），`sbbox` 安装程序会自动检测 `/etc/nginx/certs`，**直接软链接复用并提取 SPKI 指纹**，无需重复签发或占用 80 端口。
+
+### 方案 B：Cloudflare DNS-01 API Token 自动续期
+若使用独立域名且 80 端口受限，推荐结合 `acme.sh` 与 Cloudflare API Token：
+1. 在 [Cloudflare 控制台](https://dash.cloudflare.com/) 创建具有「编辑区域 DNS (Zone.DNS:Edit)」权限的 API Token；
+2. 运行 `CF_Token="你的Token" ~/.acme.sh/acme.sh --issue --dns dns_cf -d 你的域名`；
+3. 执行 `sbbox cert sync`，脚本将自动加载新证书并平滑热重载 SPKI 指纹与各协议客户端订阅。
+
+---
+
+## ☁️ Cloudflare WARP 与 Argo 隧道
+
+* **Cloudflare Argo 隧道 (`cloudflared`)**：
+  - `sbbox argo status`：查看本地 `cloudflared` 内核版本与运行状态；
+  - `sbbox argo update`：一键自动从 Cloudflare 官方检测并下载更新最新内核（已集成官方最新稳定版 **`2026.10.3`**）；
+  - `sbbox argo on <token>`：输入 Cloudflare Zero Trust Tunnel Token，一键配置并注册为 systemd 开机自启服务；
+  - `sbbox argo off`：平滑停止并卸载 Argo 隧道。
+* **Cloudflare WARP 原生出站与流媒体解锁**：
+  - `sbbox warp status`：查看 WARP 凭据状态与 Cloudflare 分配的出站 IPv6；
+  - `sbbox warp update`：调用官方多 API 接口动态刷新专属 WireGuard 凭据，自动解锁 OpenAI/ChatGPT/Claude/Netflix 等流媒体与 AI 服务。
 
 ---
 
