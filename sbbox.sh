@@ -2888,11 +2888,12 @@ ProtectControlGroups=yes
 Description=sbbox subscription server
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 ExecStart=$runner
-Restart=on-failure
+Restart=always
 RestartSec=3s
 LimitNOFILE=65535
 NoNewPrivileges=yes
