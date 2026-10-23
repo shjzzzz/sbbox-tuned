@@ -679,6 +679,13 @@ cert_matches_ym() {
   return 1
 }
 
+# 订阅 HTTPS：证书域名有效且为 python 订阅服务时启用，订阅地址改用证书域名（IP 无法通过证书校验）
+sub_tls_domain() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  local d="${ym:-$(cat "$SB_HOME/ym" 2>/dev/null)}"
+  [ -n "$d" ] && cert_matches_ym "$d" && echo "$d"
+}
+
 get_cert_paths() {
   if cert_ready; then
     cert_path="$CERT_DIR/fullchain.cer"
@@ -2449,9 +2456,10 @@ gen_sub() {
 
   [ -z "$SBBOX_CHECK_ONLY" ] && start_sub_server
 
-  local subhost="$server_ip"
+  local subhost="$server_ip" subscheme="http" _tlsd
+  if _tlsd=$(sub_tls_domain); then subscheme="https"; subhost="$_tlsd"; fi
   case "$subhost" in *:*) subhost="[$subhost]" ;; esac   # IPv6 需方括号
-  local sub_url="http://$subhost:$subport/$token"
+  local sub_url="$subscheme://$subhost:$subport/$token"
   if command -v qrencode >/dev/null 2>&1; then
     qrencode -o "$SUB_DIR/sub_qr.png" -s 8 -m 2 "$sub_url" 2>/dev/null || true
     cp -f "$SUB_DIR/sub_qr.png" "$SB_HOME/sub_qr.png" 2>/dev/null || true
@@ -2465,7 +2473,7 @@ gen_sub() {
     echo -e "  ${CYAN}[+] 订阅二维码（手机客户端扫码直接导入）：${NC}"
     qrencode -t ANSIUTF8 -m 1 "$sub_url"
     echo "==========================================================="
-    echo -e "  ${CYAN}[二维码图片]${NC} 网页直链: ${YELLOW}http://$subhost:$subport/qr.png${NC}"
+    echo -e "  ${CYAN}[二维码图片]${NC} 网页直链: ${YELLOW}$sub_url/qr${NC}"
     echo "==========================================================="
   fi
   echo -e "  ${CYAN}[订阅拉取]${NC} Clash/Mihomo 专属订阅直链: ${YELLOW}$sub_url?clash=1${NC}"
@@ -2484,13 +2492,16 @@ start_sub_server() {
     if true; then
       cat > "$SB_HOME/sub_server.py" << 'PYEOF'
 #!/usr/bin/env python3
-import sys, os, re, base64, json
+import sys, os, re, base64, json, ssl
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import unquote
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 50934
 WEB_DIR = sys.argv[2] if len(sys.argv) > 2 else "/root/sbbox/websub"
 SB_HOME = os.path.dirname(WEB_DIR.rstrip("/"))
+# 可选 HTTPS：argv[3]=证书链 argv[4]=私钥；缺省或加载失败则退回明文 HTTP
+TLS_CERT = sys.argv[3] if len(sys.argv) > 3 else ""
+TLS_KEY = sys.argv[4] if len(sys.argv) > 4 else ""
 
 # 订阅端口监听 0.0.0.0，请求路径必须白名单校验后才能拼进 WEB_DIR，
 # 否则 "/../../../etc/passwd" 会变成公网任意文件读取。
@@ -2804,10 +2815,37 @@ class SubHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+class TLSServer(ThreadingHTTPServer):
+    """握手放在各自的工作线程里（带超时），证书续期后按 mtime 自动重载。"""
+    _ctx = None
+    _stamp = None
+
+    def _context(self):
+        stamp = (os.stat(TLS_CERT).st_mtime, os.stat(TLS_KEY).st_mtime)
+        if self._ctx is None or stamp != self._stamp:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+            ctx.load_cert_chain(TLS_CERT, TLS_KEY)
+            self._ctx, self._stamp = ctx, stamp
+        return self._ctx
+
+    def process_request_thread(self, request, client_address):
+        try:
+            request.settimeout(10)
+            request = self._context().wrap_socket(request, server_side=True)
+        except Exception:
+            self.shutdown_request(request)
+            return
+        ThreadingHTTPServer.process_request_thread(self, request, client_address)
+
 def run():
     ThreadingHTTPServer.daemon_threads = True
     ThreadingHTTPServer.request_queue_size = 128
-    httpd = ThreadingHTTPServer(("0.0.0.0", PORT), SubHandler)
+    if TLS_CERT and TLS_KEY:
+        TLSServer._context(TLSServer)  # 启动时先校验一次，证书不可用就直接报错退出
+        httpd = TLSServer(("0.0.0.0", PORT), SubHandler)
+    else:
+        httpd = ThreadingHTTPServer(("0.0.0.0", PORT), SubHandler)
     httpd.serve_forever()
 
 if __name__ == "__main__":
@@ -2816,6 +2854,7 @@ PYEOF
       chmod +x "$SB_HOME/sub_server.py"
     fi
     runner="python3 $SB_HOME/sub_server.py $subport $SUB_DIR"
+    [ -n "$(sub_tls_domain)" ] && runner="$runner $CERT_DIR/fullchain.cer $CERT_DIR/private.key"
     SUB_MARK="sub_server.py $subport"
   elif command -v busybox >/dev/null 2>&1; then
     runner="busybox httpd -f -p $subport -h $SUB_DIR"
@@ -2927,6 +2966,8 @@ cmd_sub() {
         return 0
       fi
       open_port "$port" tcp
+      local subscheme="http" _tlsd
+      if _tlsd=$(sub_tls_domain); then subscheme="https"; subhost="$_tlsd"; fi
       case "$subhost" in *:*) subhost="[$subhost]" ;; esac
       if ([ "$SERVICE_TYPE" = "systemd" ] && systemctl is-active --quiet sbbox-sub 2>/dev/null) || pgrep -f "sub_server.py $port" >/dev/null 2>&1 || pgrep -f "http.server $port" >/dev/null 2>&1 || pgrep -f "httpd -f -p $port" >/dev/null 2>&1; then
         info "订阅服务：运行中"
@@ -2934,7 +2975,7 @@ cmd_sub() {
         warn "订阅服务：未运行，正在重新拉起……"
         sub=1 subport="$port" subid="$token" start_sub_server
       fi
-      local sub_url="http://$subhost:$port/$token"
+      local sub_url="$subscheme://$subhost:$port/$token"
       if command -v qrencode >/dev/null 2>&1; then
         qrencode -o "$SUB_DIR/sub_qr.png" -s 8 -m 2 "$sub_url" 2>/dev/null || true
         cp -f "$SUB_DIR/sub_qr.png" "$SB_HOME/sub_qr.png" 2>/dev/null || true
@@ -2948,7 +2989,7 @@ cmd_sub() {
         echo -e "  ${CYAN}[+] 订阅二维码（手机客户端扫码直接导入）：${NC}"
         qrencode -t ANSIUTF8 -m 1 "$sub_url"
         echo "==========================================================="
-        echo -e "  ${CYAN}[二维码图片]${NC} 网页直链: ${YELLOW}http://$subhost:$port/qr.png${NC}"
+        echo -e "  ${CYAN}[二维码图片]${NC} 网页直链: ${YELLOW}$sub_url/qr${NC}"
         echo "==========================================================="
       fi
       echo -e "  ${CYAN}[订阅拉取]${NC} Clash/Mihomo 专属订阅直链: ${YELLOW}$sub_url?clash=1${NC}"

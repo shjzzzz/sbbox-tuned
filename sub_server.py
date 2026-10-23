@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-import sys, os, re, base64, json
+import sys, os, re, base64, json, ssl
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import unquote
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 50934
 WEB_DIR = sys.argv[2] if len(sys.argv) > 2 else "/root/sbbox/websub"
 SB_HOME = os.path.dirname(WEB_DIR.rstrip("/"))
+# 可选 HTTPS：argv[3]=证书链 argv[4]=私钥；缺省或加载失败则退回明文 HTTP
+TLS_CERT = sys.argv[3] if len(sys.argv) > 3 else ""
+TLS_KEY = sys.argv[4] if len(sys.argv) > 4 else ""
 
 # 订阅端口监听 0.0.0.0，请求路径必须白名单校验后才能拼进 WEB_DIR，
 # 否则 "/../../../etc/passwd" 会变成公网任意文件读取。
@@ -319,10 +322,37 @@ class SubHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+class TLSServer(ThreadingHTTPServer):
+    """握手放在各自的工作线程里（带超时），证书续期后按 mtime 自动重载。"""
+    _ctx = None
+    _stamp = None
+
+    def _context(self):
+        stamp = (os.stat(TLS_CERT).st_mtime, os.stat(TLS_KEY).st_mtime)
+        if self._ctx is None or stamp != self._stamp:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+            ctx.load_cert_chain(TLS_CERT, TLS_KEY)
+            self._ctx, self._stamp = ctx, stamp
+        return self._ctx
+
+    def process_request_thread(self, request, client_address):
+        try:
+            request.settimeout(10)
+            request = self._context().wrap_socket(request, server_side=True)
+        except Exception:
+            self.shutdown_request(request)
+            return
+        ThreadingHTTPServer.process_request_thread(self, request, client_address)
+
 def run():
     ThreadingHTTPServer.daemon_threads = True
     ThreadingHTTPServer.request_queue_size = 128
-    httpd = ThreadingHTTPServer(("0.0.0.0", PORT), SubHandler)
+    if TLS_CERT and TLS_KEY:
+        TLSServer._context(TLSServer)  # 启动时先校验一次，证书不可用就直接报错退出
+        httpd = TLSServer(("0.0.0.0", PORT), SubHandler)
+    else:
+        httpd = ThreadingHTTPServer(("0.0.0.0", PORT), SubHandler)
     httpd.serve_forever()
 
 if __name__ == "__main__":
