@@ -46,7 +46,7 @@ SYSCTL_CONF="/etc/sysctl.d/99-sbbox.conf"
 LIMITS_CONF="/etc/security/limits.d/99-sbbox.conf"
 SB_SERVICE="sbbox"
 SB_SEC_DIR="$SB_HOME/sec"
-SBBOX_VERSION="v2.7.69"
+SBBOX_VERSION="v2.7.70"
 SB_URL="https://raw.githubusercontent.com/shjzzzz/sbbox-tuned/main/sbbox.sh"
 # root 装到 /usr/local/bin（始终在 PATH 中）；非 root 退回 ~/bin
 if [ "$(id -u 2>/dev/null)" = "0" ] && [ -d /usr/local/bin ]; then
@@ -169,7 +169,7 @@ check_required_cmds() {
   local c miss=""
   for c in curl openssl python3 iptables; do command -v "$c" >/dev/null 2>&1 || miss="$miss $c"; done
   if [ -n "$miss" ]; then
-    warn "缺少必需命令：$miss —— 订阅服务 / sbbox block / selftest / WARP 等功能会受影响。请手动安装后重新运行（apt install -y$miss）"
+    warn "缺少必需命令：$miss —— 订阅服务 / sbbox block / selftest / WARP 等功能会受影响。请手动安装后重新运行（apt-get install -y$miss）"
     return 1
   fi
 }
@@ -262,21 +262,57 @@ showmode() {
   echo "==========================================================="
 }
 
+# ---------- 系统族探测（Debian / Ubuntu 及其衍生版：Mint、Kali、Raspberry Pi OS、Armbian、Pop!_OS 等）----------
+# 按 /etc/os-release 的 ID / ID_LIKE 归并，而不是只认 apt 命令是否存在；
+# 返回 debian | rhel | alpine | other，同时设置 OS_ID（原始 ID）、OS_VER（VERSION_ID）。
+detect_os_family() {
+  OS_ID=""; OS_VER=""; OS_FAMILY=other
+  if [ -r /etc/os-release ]; then
+    OS_ID=$(. /etc/os-release 2>/dev/null; echo "${ID:-}")
+    OS_VER=$(. /etc/os-release 2>/dev/null; echo "${VERSION_ID:-}")
+    local like; like=$(. /etc/os-release 2>/dev/null; echo "${ID_LIKE:-}")
+    case " $OS_ID $like " in
+      *" debian "*|*" ubuntu "*) OS_FAMILY=debian ;;
+      *" rhel "*|*" fedora "*|*" centos "*) OS_FAMILY=rhel ;;
+      *" alpine "*) OS_FAMILY=alpine ;;
+    esac
+  fi
+  if [ "$OS_FAMILY" = other ]; then
+    if command -v apk >/dev/null 2>&1; then OS_FAMILY=alpine
+    elif command -v apt-get >/dev/null 2>&1; then OS_FAMILY=debian
+    elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then OS_FAMILY=rhel
+    fi
+  fi
+}
+
 # ---------- 依赖安装 ----------
 install_deps() {
   if [ ! -f "$SB_HOME/deps_done" ]; then
     info "安装系统依赖……"
-    if command -v apk >/dev/null 2>&1; then
-      apk update >/dev/null 2>&1 && apk add --no-cache bash coreutils curl wget openssl iptables ip6tables ca-certificates ethtool iproute2 qrencode python3 >/dev/null 2>&1
-    elif command -v apt >/dev/null 2>&1; then
-      export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1
-      _apt="apt-get -o DPkg::Lock::Timeout=300"
-      $_apt update -qq >/dev/null 2>&1
-      $_apt install -y -qq curl wget openssl ca-certificates iptables iptables-persistent net-tools ethtool iproute2 qrencode python3 cron >/dev/null 2>&1 \
-        || $_apt install -y -qq curl wget openssl ca-certificates iptables iproute2 python3 cron qrencode
-    elif command -v dnf >/dev/null 2>&1; then
-      dnf install -y curl wget openssl ca-certificates iptables ethtool iproute qrencode python3 >/dev/null 2>&1
-    fi
+    detect_os_family
+    case "$OS_FAMILY" in
+      alpine)
+        apk update >/dev/null 2>&1 && apk add --no-cache bash coreutils curl wget openssl iptables ip6tables ca-certificates ethtool iproute2 qrencode python3 tar gzip procps util-linux >/dev/null 2>&1
+        ;;
+      debian)
+        # tar / gzip：解压内核；procps：pgrep / pkill / sysctl；util-linux：flock；kmod：modprobe / lsmod。
+        # 最小化镜像（Debian 13 cloud、Ubuntu minimal、容器基础镜像）常缺这几个。
+        export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1
+        _apt="apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+        $_apt update -qq >/dev/null 2>&1
+        _base="curl wget openssl ca-certificates tar gzip procps util-linux kmod iptables iproute2 python3 cron qrencode"
+        # iptables-persistent 在 Debian 13 / Ubuntu 24.04+ 上是 netfilter-persistent 的前端，装它会顺带拉起规则落盘；
+        # 与 ufw / nftables 持久化冲突时单独装失败不应拖垮整批依赖，所以分两步。
+        $_apt install -y -qq $_base net-tools ethtool >/dev/null 2>&1 \
+          || $_apt install -y -qq $_base
+        command -v netfilter-persistent >/dev/null 2>&1 \
+          || $_apt install -y -qq iptables-persistent >/dev/null 2>&1 || true
+        ;;
+      rhel)
+        _pm=dnf; command -v dnf >/dev/null 2>&1 || _pm=yum
+        $_pm install -y curl wget openssl ca-certificates tar gzip procps-ng util-linux kmod iptables ethtool iproute qrencode python3 cronie >/dev/null 2>&1
+        ;;
+    esac
     check_required_cmds && touch "$SB_HOME/deps_done"
   fi
   # 检查并修正 systemd-resolved 强制 DoT 导致的云厂商内网 DNS 死锁
@@ -415,9 +451,6 @@ try:
         changed = True
     for ib in data.get('inbounds', []):
         if ib.get('type') == 'naive':
-            if 'tls' in ib and ib['tls'].get('min_version') == '1.3':
-                ib['tls']['min_version'] = '1.2'
-                changed = True
             if not ib.get('tcp_fast_open'):
                 ib['tcp_fast_open'] = True
                 changed = True
@@ -459,9 +492,6 @@ try:
             changed = True
     for ib in data.get('inbounds', []):
         if ib.get('type') == 'naive':
-            if 'tls' in ib and ib['tls'].get('min_version') == '1.3':
-                ib['tls']['min_version'] = '1.2'
-                changed = True
             if not ib.get('tcp_fast_open'):
                 ib['tcp_fast_open'] = True
                 changed = True
@@ -608,6 +638,18 @@ load_secrets() {
     cat "$f"
   }
   pw_tu=$(_load_sec tuic_pw)
+  # TUIC 的 uuid 不再复用 Reality 的 VLESS uuid（后者是 Reality 隧道的认证凭据，跨协议复用会让一处泄露连带另一处）。
+  # 平滑升级：已装 tuic-in 且还没有 tuic_uuid 的机器沿用旧 uuid，避免一次 `sbbox up` 让现网 TUIC 客户端全掉线；
+  # `sbbox rotate` 会生成独立 uuid。
+  if [ ! -s "$SB_SEC_DIR/tuic_uuid" ]; then
+    if [ -z "$SBBOX_ROTATE" ] && [ -s "$SB_CONF" ] && grep -q '"tuic-in"' "$SB_CONF" 2>/dev/null; then
+      printf '%s\n' "$uuid" > "$SB_SEC_DIR/tuic_uuid"
+    else
+      { "$SB_BIN" generate uuid 2>/dev/null || cat /proc/sys/kernel/random/uuid; } > "$SB_SEC_DIR/tuic_uuid"
+    fi
+  fi
+  chmod 600 "$SB_SEC_DIR/tuic_uuid" 2>/dev/null
+  uuid_tu=$(cat "$SB_SEC_DIR/tuic_uuid")
   pw_hy=$(_load_sec hy2_pw)
   nv_user=$(_load_sec naive_user)
   nv_pw=$(_load_sec naive_pw)
@@ -1024,6 +1066,16 @@ if [ -n "$def_dev" ]; then
       done
       command -v netfilter-persistent >/dev/null 2>&1 && netfilter-persistent save >/dev/null 2>&1
     fi
+  fi
+
+  # 路由层 MTU：DHCP（OCI 等）会把默认路由 / 直连路由的 mtu 设成 9000，链路 MTU 已是 1500 时路由上的 9000 仍在，
+  # QUIC（Hysteria2 / TUIC / Naive-H3）按它估包，超大包在公网被静默丢弃 → 断连。把大于 1500 的路由 mtu 全部钉回 1500。
+  ip -4 route show dev "$def_dev" 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="mtu" && $(i+1)>1500){print; break}}' | while read -r _r; do
+    ip route change $(echo "$_r" | sed 's/ mtu [0-9]*//') dev "$def_dev" mtu 1500 2>/dev/null && echo "路由 MTU → 1500：${_r%% *}"
+  done
+  # dhcpcd 续租会把 9000 写回路由：不再接受 DHCP 下发的 MTU，并在租约事件后兜底一次
+  if [ -f /etc/dhcpcd.conf ] && grep -q '^option interface_mtu' /etc/dhcpcd.conf; then
+    sed -i 's/^option interface_mtu$/nooption interface_mtu/' /etc/dhcpcd.conf 2>/dev/null || true
   fi
 
   # 收发环形队列拉到硬件上限与通用分片卸载
@@ -1727,12 +1779,17 @@ installsb() {
         fi
       fi
       echo "$api_port" > "$SB_HOME/api_port"
+      # 只监听回环，但本机任何用户都能连；不设 secret 等于本机无认证控制面（查连接、读指标、改运行状态）。
+      [ -s "$SB_HOME/api_secret" ] || gen_secret > "$SB_HOME/api_secret"
+      chmod 600 "$SB_HOME/api_secret" 2>/dev/null
+      local api_secret; api_secret=$(cat "$SB_HOME/api_secret")
       api_block="    \"services\": [
         {
             \"type\": \"api\",
             \"tag\": \"api-service\",
             \"listen\": \"127.0.0.1\",
-            \"listen_port\": $api_port
+            \"listen_port\": $api_port,
+            \"secret\": \"$api_secret\"
         }
     ],"
       info "sing-box 1.14 原生 API 服务已配置（127.0.0.1:$api_port）"
@@ -1748,9 +1805,9 @@ installsb() {
   if [ "$dns_optimistic" != "0" ]; then
     dns_block='    "dns": {
         "servers": [
-            { "type": "udp", "tag": "dns-secure", "server": "1.1.1.1" },
-            { "type": "udp", "tag": "dns-backup", "server": "9.9.9.10" },
-            { "type": "https", "tag": "dns-doh", "server": "1.1.1.1" },
+            { "type": "https", "tag": "dns-secure", "server": "1.1.1.1" },
+            { "type": "https", "tag": "dns-backup", "server": "9.9.9.10" },
+            { "type": "udp", "tag": "dns-udp", "server": "1.1.1.1" },
             { "type": "local", "tag": "dns-local", "detour": "direct" }
         ],
         "strategy": "'"$sb_strategy"'",
@@ -1762,9 +1819,9 @@ installsb() {
   else
     dns_block='    "dns": {
         "servers": [
-            { "type": "udp", "tag": "dns-secure", "server": "1.1.1.1" },
-            { "type": "udp", "tag": "dns-backup", "server": "9.9.9.10" },
-            { "type": "https", "tag": "dns-doh", "server": "1.1.1.1" },
+            { "type": "https", "tag": "dns-secure", "server": "1.1.1.1" },
+            { "type": "https", "tag": "dns-backup", "server": "9.9.9.10" },
+            { "type": "udp", "tag": "dns-udp", "server": "1.1.1.1" },
             { "type": "local", "tag": "dns-local", "detour": "direct" }
         ],
         "strategy": "'"$sb_strategy"'",
@@ -1837,7 +1894,7 @@ EOF
             "listen_port": $port_tu,
             "udp_fragment": true,
             "users": [
-                { "uuid": "$uuid", "password": "$pw_tu" }
+                { "uuid": "$uuid_tu", "password": "$pw_tu" }
             ],
             "congestion_control": "bbr",
             "zero_rtt_handshake": false,
@@ -1847,6 +1904,7 @@ EOF
 
             "tls": {
                 "enabled": true,
+                "min_version": "1.3",
                 "alpn": [ "h3" ],
                 "certificate_path": "$cert_path",
                 "key_path": "$key_path",
@@ -1976,7 +2034,7 @@ EOF
             "tls": {
                 "enabled": true,
                 "server_name": "$ym",
-                "min_version": "1.2",
+                "min_version": "1.3",
                 "alpn": [ "h3", "h2" ],
                 "certificate_path": "$CERT_DIR/fullchain.cer",
                 "key_path": "$CERT_DIR/private.key",
@@ -2006,6 +2064,18 @@ EOF
                     "name": "default",
                     "password": "$pw_any"
                 }
+            ],
+            "padding_scheme": [
+                "stop=9",
+                "0=28-44",
+                "1=120-420",
+                "2=380-520,c,480-1100,c,520-1000,c,500-1200",
+                "3=11-23,520-1000",
+                "4=480-1100",
+                "5=500-1000",
+                "6=520-1000",
+                "7=500-1000",
+                "8=300-900"
             ],
             "tls": {
                 "enabled": true,
@@ -2350,7 +2420,7 @@ gen_client() {
       1|on|yes|true) [ -n "$tuech_config" ] && tuic_ech="&ech=$(printf %s "$tuech_config" | base64 | tr -d '\n')" ;;
     esac
     # TUIC v5 显式声明 version=5（Shadowrocket 强依赖，避免误判为 v4 握手失败）并保留 security=tls（v2rayN 强校验）
-    tuic_link="tuic://$uuid:$(rawurlencode "$pw_tu")@$add:$port_tu?version=5&security=tls&congestion_control=cubic&udp_relay_mode=native&alpn=h3&sni=$sni&insecure=$jhins&allowInsecure=$jhins&allow_insecure=$jhins$tuic_pcs$tuic_pin$tuic_ech#TUIC"
+    tuic_link="tuic://$uuid_tu:$(rawurlencode "$pw_tu")@$add:$port_tu?version=5&security=tls&congestion_control=cubic&udp_relay_mode=native&alpn=h3&sni=$sni&insecure=$jhins&allowInsecure=$jhins&allow_insecure=$jhins$tuic_pcs$tuic_pin$tuic_ech#TUIC"
     echo "$tuic_link" >> "$SB_LINK"
     echo "💣【 4 Tuic (QUIC 备选) 】节点信息如下："
     echo "$tuic_link"; echo
@@ -2791,8 +2861,10 @@ class SubHandler(BaseHTTPRequestHandler):
         if is_sr:
             if "noanytls=1" in q_lower:
                 selected_links = [l for l in selected_links if not l.startswith("anytls://")]
+            # 两条 Naive 默认都开 QUIC：小火箭没有 quic=1 开关，只能靠 http3:// 前缀走 QUIC，
+            # 所以 naive+https:// 也转成 http3://（原先转成 http2:// 会让第二条退回 TCP）。
             selected_links = [("http3://" + l[len("naive+quic://"):]) if l.startswith("naive+quic://")
-                              else ("http2://" + l[len("naive+https://"):]) if l.startswith("naive+https://")
+                              else ("http3://" + l[len("naive+https://"):]) if l.startswith("naive+https://")
                               else l for l in selected_links]
 
         if not selected_links:
@@ -3182,7 +3254,7 @@ gen_client_sbox() {
         "tag": "TUIC",
         "server": "'"$add"'",
         "server_port": '"$port_tu"',
-        "uuid": "'"$uuid"'",
+        "uuid": "'"$uuid_tu"'",
         "password": "'"$pw_tu"'",
         "congestion_control": "cubic",
         '"$tuic_udp"'
@@ -3470,7 +3542,7 @@ gen_client_clash() {
     server: $add
     port: $port_tu
     type: tuic
-    uuid: $uuid
+    uuid: $uuid_tu
     password: $pw_tu
     alpn: [h3]
     reduce-rtt: false
@@ -3578,6 +3650,19 @@ install_service() {
   fi
 
   if [ "$SERVICE_TYPE" = "systemd" ] && [ "$IS_ROOT" = 1 ]; then
+    # 沙箱项：PrivateTmp / ProtectKernel* / ProtectControlGroups 需要挂载命名空间，OpenVZ / 非特权 LXC 里
+    # 旧版 systemd 会因 226/NAMESPACE 起不来，容器里只保留不需要命名空间的几项（与 sbbox-sub 同一做法）。
+    # 刻意不加 ProtectSystem / ProtectHome（内核、证书、日志都在 /root 下）和 RestrictAddressFamilies
+    # （WARP / nowhere / 外置 hysteria 会用到别的地址族）。
+    SB_NS_HARDEN=""
+    if ! systemd-detect-virt --container -q 2>/dev/null; then
+      SB_NS_HARDEN="PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+"
+    fi
     cat > /etc/systemd/system/${SB_SERVICE}.service <<EOF
 [Unit]
 Description=sbbox sing-box service
@@ -3591,6 +3676,10 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+${SB_NS_HARDEN}# 内存吃紧时优先杀别的进程，代理进程尽量留到最后
+OOMScoreAdjust=-500
 TimeoutStartSec=0
 ExecStart=$SB_BIN run -c $SB_CONF
 # always 而非 on-failure：进程以 exit 0 退出时也要拉起，长期运行不留缺口
@@ -4171,7 +4260,9 @@ ensure_tcp_brutal() {
   fi
 
   info "正在检测并安装 TCP Brutal (tcp-brutal) 内核模块..."
-  if ! command -v dkms >/dev/null 2>&1; then
+  if ! command -v dkms >/dev/null 2>&1 && ! command -v apt-get >/dev/null 2>&1; then
+    warn "当前系统不是 Debian / Ubuntu 系，无法自动安装 dkms 与内核头文件，tcp-brutal 将降级至 BBR+FQ"
+  elif ! command -v dkms >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
     apt-get -o DPkg::Lock::Timeout=300 update -qq >/dev/null 2>&1
     apt-get -o DPkg::Lock::Timeout=300 install -y -qq dkms build-essential >/dev/null 2>&1 || true
@@ -5351,7 +5442,7 @@ status_show() {
   if [ -x "$SB_BIN" ] && [ -n "$api_p" ] && ss -tuln 2>/dev/null | grep -q "127.0.0.1:$api_p"; then
     echo ""
     echo -e "${CYAN}[+] sing-box 实时运行指标 (1.14 API)${NC}"
-    "$SB_BIN" api status --url "127.0.0.1:$api_p" 2>/dev/null | sed 's/^/  /'
+    "$SB_BIN" api status --url "127.0.0.1:$api_p" --secret "$(cat "$SB_HOME/api_secret" 2>/dev/null)" 2>/dev/null | sed 's/^/  /'
   fi
   echo ""
   tune_show
@@ -5847,6 +5938,9 @@ main() {
   mkdir -p "$SB_HOME"
   # 目录内含证书私钥、uuid（即各协议连接密码）与订阅令牌，收敛到仅属主可读
   chmod 700 "$SB_HOME" 2>/dev/null
+  # 重装即升级也要尊重已落盘的内核通道：没显式传 sbrel 时沿用 $SB_HOME/sbrel，
+  # 否则 pre 通道的机器重跑安装脚本会被默认值 stable 静默降级内核（1.15 alpha → 1.14.x）。
+  [ -z "$sbrel_explicit" ] && [ -f "$SB_HOME/sbrel" ] && sbrel=$(cat "$SB_HOME/sbrel")
   v4v6
   platform_profile
   install_deps

@@ -106,3 +106,11 @@ https://<证书域名>:<订阅端口>/<token>/qr         # 订阅二维码 PNG�
 2. **中间人劫持防护（Pinning）**：提取证书 SHA-256 指纹（`pinSHA256`）与 SPKI 公钥 Hash 写入客户端配置，杜绝证书替换或中间人嗅探。
 3. **Nowhere 上下行分流 Sidecar**：上行使用 TLS/TCP 彻底避开国内运营商对 UDP 上行的 QoS 丢包；下行使用 QUIC/UDP 享受无队头阻塞极速传输。
 4. **内核级流控对齐**：系统级自动加载 BBRv3 + FQ，优化 TCP/UDP 套接字缓冲区，保障高并发大吞吐稳定不掉线。
+5. **Debian / Ubuntu 自适应（v2.7.70）**：按 `/etc/os-release` 的 `ID` / `ID_LIKE` 归并系统族（含 Mint、Kali、Raspberry Pi OS、Armbian 等衍生版），依赖补齐 `tar gzip procps util-linux kmod`（最小化镜像常缺），`iptables-persistent` 单独安装、失败不拖垮整批依赖；已落盘的内核通道在重装时不再被默认值覆盖。
+6. **安全审计加固（v2.7.70）**：
+   - 原生 API 服务加 `secret`（原先回环端口本机无认证）；DNS 默认改 DoH（原先明文 UDP 53 会被机房网络看到每条域名查询）；
+   - TUIC 使用独立 uuid，不再复用 Reality 的 VLESS uuid（已装机器沿用旧值保证不掉线，`sbbox rotate` 后拆开）；
+   - Naive 入站 TLS 最低版本 1.3；AnyTLS 使用自定义 `padding_scheme`（官方默认方案是公开流量指纹）；AnyTLS 为全端兼容仍保留 TLS 1.2；
+   - systemd 单元加沙箱项（`PrivateTmp`、`ProtectKernel*`、`ProtectControlGroups`、`RestrictSUIDSGID`、`LockPersonality`、`OOMScoreAdjust=-500`），容器环境自动跳过需要命名空间的几项。
+7. **稳定性（v2.7.70）**：网卡调优把 DHCP 下发的路由 MTU 9000 钉回 1500（链路 MTU 已是 1500 时路由上的 9000 会让 QUIC 按超大包估算而被公网静默丢弃），并让 dhcpcd 不再接受下发的 MTU。
+8. **两条 Naive 默认都走 QUIC**：节点链接与 sing-box 客户端配置都带 `quic=1`；订阅按小火箭 UA 转换时，`naive+https://` 也转成 `http3://`（原先转成 `http2://` 会让第二条退回 TCP）。
