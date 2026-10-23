@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import sys, os, re, base64, json
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import unquote
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 50934
@@ -13,7 +13,7 @@ SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 WEB_DIR_REAL = os.path.realpath(WEB_DIR)
 
 def resolve_token_file(token_path):
-    if not SAFE_TOKEN_RE.match(token_path) or token_path.startswith("."):
+    if not SAFE_TOKEN_RE.match(token_path) or token_path.startswith(".") or token_path in ("index.html", "sub_qr.png"):
         return None
     candidate = os.path.realpath(os.path.join(WEB_DIR_REAL, token_path))
     if candidate != WEB_DIR_REAL and not candidate.startswith(WEB_DIR_REAL + os.sep):
@@ -95,7 +95,15 @@ def sanitize_clash_yaml(yaml_text):
         return "\n".join(final_lines) + ("\n" if yaml_text.endswith("\n") else "")
     return yaml_text
 
+class _NullWriter:
+    def write(self, b):
+        return len(b)
+    def flush(self):
+        pass
+
 class SubHandler(BaseHTTPRequestHandler):
+    # 空闲/慢速连接超时，避免占满服务线程
+    timeout = 10
     # 隐私：不落访问日志，也不把客户端 IP / UA 写进 journald；
     # 真正的处理器错误仍写 stderr（不带客户端地址），便于排错
     def version_string(self):
@@ -116,8 +124,19 @@ class SubHandler(BaseHTTPRequestHandler):
         msg = re.sub(r"/[A-Za-z0-9._-]{16,}", "/<redacted>", msg)
         sys.stderr.write("sbbox-sub: " + msg[:200] + "\n")
 
+    def end_headers(self):
+        BaseHTTPRequestHandler.end_headers(self)
+        # HEAD：头部已发出，其后的响应体丢弃
+        if self.command == "HEAD":
+            self._real_wfile = self.wfile
+            self.wfile = _NullWriter()
+
     def do_HEAD(self):
-        self.do_GET()
+        try:
+            self.do_GET()
+        finally:
+            if hasattr(self, "_real_wfile"):
+                self.wfile = self._real_wfile
 
     def do_GET(self):
         raw_path = self.path.split("#")[0]
@@ -128,7 +147,8 @@ class SubHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
-        if token_path in ("qr", "qr.png", "sub_qr.png") or token_path.endswith((".png", "/qr")):
+        # QR 内含带 token 的订阅 URL，必须携带有效 token 才可取：/<token>/qr
+        if token_path.endswith("/qr") and resolve_token_file(token_path[:-3]):
             qr_file = os.path.join(WEB_DIR_REAL, "sub_qr.png")
             if not os.path.isfile(qr_file):
                 qr_file = os.path.join(SB_HOME, "sub_qr.png")
@@ -300,7 +320,9 @@ class SubHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 def run():
-    httpd = HTTPServer(("0.0.0.0", PORT), SubHandler)
+    ThreadingHTTPServer.daemon_threads = True
+    ThreadingHTTPServer.request_queue_size = 128
+    httpd = ThreadingHTTPServer(("0.0.0.0", PORT), SubHandler)
     httpd.serve_forever()
 
 if __name__ == "__main__":

@@ -182,7 +182,7 @@ detect_env() {
     *) error "目前脚本不支持 $(uname -m) 架构" && exit 1 ;;
   esac
   if [ "$EUID" -eq 0 ] 2>/dev/null; then IS_ROOT=1; else IS_ROOT=0; fi
-  if pidof systemd >/dev/null 2>&1; then
+  if [ -d /run/systemd/system ]; then
     SERVICE_TYPE="systemd"
   elif command -v rc-service >/dev/null 2>&1; then
     SERVICE_TYPE="openrc"
@@ -269,8 +269,11 @@ install_deps() {
     if command -v apk >/dev/null 2>&1; then
       apk update >/dev/null 2>&1 && apk add --no-cache bash coreutils curl wget openssl iptables ip6tables ca-certificates ethtool iproute2 qrencode python3 >/dev/null 2>&1
     elif command -v apt >/dev/null 2>&1; then
-      export DEBIAN_FRONTEND=noninteractive
-      apt update >/dev/null 2>&1 && apt install -y curl wget openssl ca-certificates iptables iptables-persistent net-tools ethtool iproute2 qrencode python3 >/dev/null 2>&1
+      export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1
+      _apt="apt-get -o DPkg::Lock::Timeout=300"
+      $_apt update -qq >/dev/null 2>&1
+      $_apt install -y -qq curl wget openssl ca-certificates iptables iptables-persistent net-tools ethtool iproute2 qrencode python3 cron >/dev/null 2>&1 \
+        || $_apt install -y -qq curl wget openssl ca-certificates iptables iproute2 python3 cron qrencode
     elif command -v dnf >/dev/null 2>&1; then
       dnf install -y curl wget openssl ca-certificates iptables ethtool iproute qrencode python3 >/dev/null 2>&1
     fi
@@ -308,7 +311,7 @@ open_port() {
   if [ "$IS_ROOT" = 1 ]; then
     command -v iptables  >/dev/null 2>&1 && fw_accept_rule iptables  "$proto" "$port"
     command -v ip6tables >/dev/null 2>&1 && fw_accept_rule ip6tables "$proto" "$port"
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    if command -v ufw >/dev/null 2>&1 && LC_ALL=C ufw status 2>/dev/null | grep -q "^Status: active"; then
       ufw allow "${port}/${proto}" >/dev/null 2>&1
     fi
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state 2>/dev/null | grep -q "running"; then
@@ -334,7 +337,7 @@ close_port() {
     if command -v ip6tables >/dev/null 2>&1; then
       ip6tables -S INPUT 2>/dev/null | grep -E "(^| )--dport $port( |$)" | sed 's/^-A/ip6tables -D/' | bash 2>/dev/null || true
     fi
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    if command -v ufw >/dev/null 2>&1 && LC_ALL=C ufw status 2>/dev/null | grep -q "^Status: active"; then
       ufw delete allow "${port}/${proto}" >/dev/null 2>&1 || true
     fi
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state 2>/dev/null | grep -q "running"; then
@@ -2482,7 +2485,7 @@ start_sub_server() {
       cat > "$SB_HOME/sub_server.py" << 'PYEOF'
 #!/usr/bin/env python3
 import sys, os, re, base64, json
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import unquote
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 50934
@@ -2495,7 +2498,7 @@ SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 WEB_DIR_REAL = os.path.realpath(WEB_DIR)
 
 def resolve_token_file(token_path):
-    if not SAFE_TOKEN_RE.match(token_path) or token_path.startswith("."):
+    if not SAFE_TOKEN_RE.match(token_path) or token_path.startswith(".") or token_path in ("index.html", "sub_qr.png"):
         return None
     candidate = os.path.realpath(os.path.join(WEB_DIR_REAL, token_path))
     if candidate != WEB_DIR_REAL and not candidate.startswith(WEB_DIR_REAL + os.sep):
@@ -2577,7 +2580,15 @@ def sanitize_clash_yaml(yaml_text):
         return "\n".join(final_lines) + ("\n" if yaml_text.endswith("\n") else "")
     return yaml_text
 
+class _NullWriter:
+    def write(self, b):
+        return len(b)
+    def flush(self):
+        pass
+
 class SubHandler(BaseHTTPRequestHandler):
+    # 空闲/慢速连接超时，避免占满服务线程
+    timeout = 10
     # 隐私：不落访问日志，也不把客户端 IP / UA 写进 journald；
     # 真正的处理器错误仍写 stderr（不带客户端地址），便于排错
     def version_string(self):
@@ -2598,8 +2609,19 @@ class SubHandler(BaseHTTPRequestHandler):
         msg = re.sub(r"/[A-Za-z0-9._-]{16,}", "/<redacted>", msg)
         sys.stderr.write("sbbox-sub: " + msg[:200] + "\n")
 
+    def end_headers(self):
+        BaseHTTPRequestHandler.end_headers(self)
+        # HEAD：头部已发出，其后的响应体丢弃
+        if self.command == "HEAD":
+            self._real_wfile = self.wfile
+            self.wfile = _NullWriter()
+
     def do_HEAD(self):
-        self.do_GET()
+        try:
+            self.do_GET()
+        finally:
+            if hasattr(self, "_real_wfile"):
+                self.wfile = self._real_wfile
 
     def do_GET(self):
         raw_path = self.path.split("#")[0]
@@ -2610,7 +2632,8 @@ class SubHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
-        if token_path in ("qr", "qr.png", "sub_qr.png") or token_path.endswith((".png", "/qr")):
+        # QR 内含带 token 的订阅 URL，必须携带有效 token 才可取：/<token>/qr
+        if token_path.endswith("/qr") and resolve_token_file(token_path[:-3]):
             qr_file = os.path.join(WEB_DIR_REAL, "sub_qr.png")
             if not os.path.isfile(qr_file):
                 qr_file = os.path.join(SB_HOME, "sub_qr.png")
@@ -2624,7 +2647,7 @@ class SubHandler(BaseHTTPRequestHandler):
                 return
 
         force_format = ""
-        for suffix in ("/clash", "/singbox", "/sb", "/json", "/b64", "/v2rayn", "/v2ray", "/shadowrocket"):
+        for suffix in ("/clash", "/singbox", "/sb", "/json", "/b64", "/v2rayn", "/v2ray", "/shadowrocket", "/nowhere"):
             if token_path.endswith(suffix):
                 force_format = suffix.lstrip("/")
                 token_path = token_path[:-len(suffix)]
@@ -2742,12 +2765,17 @@ class SubHandler(BaseHTTPRequestHandler):
                         l = l + "?version=5"
             return l
 
+        is_nowhere = force_format == "nowhere" or "format=nowhere" in q_lower or "nowhere=1" in q_lower
+        if is_nowhere:
+            raw_links = [l for l in raw_links if l.startswith("nowhere://")]
+
         selected_links = [ensure_node_security(l) for l in raw_links]
 
         # Shadowrocket（小火箭）客户端适配：
         # - 小火箭仅支持 http3:// 与 http2:// 格式的 Naive 链接（按 UA 现场转换）
         # - 小火箭 2.2.65+ 原生支持 anytls:// 协议（默认保留下发，旧版本可通过 noanytls=1 剔除）
         # - TUIC 节点已通过 ensure_node_security 保证 version=5 声明
+        # - 保留全部协议链接（含 nowhere://），方便支持该协议的客户端或插件完整加载
         is_sr = "shadowrocket" in ua or force_format == "shadowrocket" or "shadowrocket=1" in q_lower or "format=shadowrocket" in q_lower
         if is_sr:
             if "noanytls=1" in q_lower:
@@ -2777,7 +2805,9 @@ class SubHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 def run():
-    httpd = HTTPServer(("0.0.0.0", PORT), SubHandler)
+    ThreadingHTTPServer.daemon_threads = True
+    ThreadingHTTPServer.request_queue_size = 128
+    httpd = ThreadingHTTPServer(("0.0.0.0", PORT), SubHandler)
     httpd.serve_forever()
 
 if __name__ == "__main__":
@@ -4100,7 +4130,11 @@ ensure_tcp_brutal() {
 
   info "正在检测并安装 TCP Brutal (tcp-brutal) 内核模块..."
   if ! command -v dkms >/dev/null 2>&1; then
-    apt-get update -qq && apt-get install -y -qq dkms "linux-headers-$(uname -r)" >/dev/null 2>&1 || true
+    export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
+    apt-get -o DPkg::Lock::Timeout=300 update -qq >/dev/null 2>&1
+    apt-get -o DPkg::Lock::Timeout=300 install -y -qq dkms build-essential >/dev/null 2>&1 || true
+    apt-get -o DPkg::Lock::Timeout=300 install -y -qq "linux-headers-$(uname -r)" >/dev/null 2>&1 \
+      || warn "找不到 linux-headers-$(uname -r)，无法编译 tcp-brutal（自编译内核请自行提供头文件）"
   fi
 
   if ! command -v dkms >/dev/null 2>&1 || [ ! -d "/lib/modules/$(uname -r)/build" ]; then
@@ -5800,7 +5834,7 @@ main() {
   install_service
   gen_client
 
-  case "$warp" in
+  case "${warp:-}" in
     1|yes|on|true|YES|ON|TRUE) cmd_warp on ai ;;
     ai|all) cmd_warp on "$warp" ;;
   esac
