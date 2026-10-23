@@ -68,6 +68,25 @@ sbbox argo status|update # Cloudflare Argo 隧道状态与一键内核更新
 
 ---
 
+## 🔐 订阅服务（HTTPS）
+
+`sbbox sub` 启动的订阅服务在证书域名（`ym`）有效且已安装 `python3` 时**自动启用 HTTPS**，订阅地址形如：
+
+```text
+https://<证书域名>:<订阅端口>/<token>            # v2rayN / 通用 Base64
+https://<证书域名>:<订阅端口>/<token>?clash=1    # Clash / Mihomo
+https://<证书域名>:<订阅端口>/<token>?singbox=1  # sing-box
+https://<证书域名>:<订阅端口>/<token>/qr         # 订阅二维码 PNG（需 token）
+```
+
+* **使用证书域名**：订阅地址的主机必须是证书域名，用服务器 IP 访问会因证书不匹配而失败。
+* **证书续期自动生效**：证书文件更新后，订阅服务按修改时间自动重载，无需重启。
+* **自动回退**：无有效证书域名（或仅有 `busybox`）时回退为 HTTP，并在终端提示地址。
+* **安全加固**：二维码仅在携带有效 token 时可取；服务为多线程并带连接超时，空闲连接不会占死服务；HEAD 请求不返回响应体。
+* **升级**：已安装的机器重新运行安装脚本（会重写订阅服务单元并重启）即可切换为 HTTPS；切换后需要把客户端里的旧 `http://IP:端口/...` 订阅地址改成新的 HTTPS 域名地址。
+
+---
+
 ## ☁️ Cloudflare WARP 与 Argo 隧道
 
 * **Cloudflare Argo 隧道 (`cloudflared`)**：

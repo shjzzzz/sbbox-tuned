@@ -68,6 +68,25 @@ For standalone domains without port 80 access:
 
 ---
 
+## 🔐 Subscription Server (HTTPS)
+
+The subscription server started by `sbbox sub` **serves HTTPS automatically** when the certificate domain (`ym`) has a valid certificate and `python3` is installed:
+
+```text
+https://<cert-domain>:<sub-port>/<token>            # v2rayN / generic Base64
+https://<cert-domain>:<sub-port>/<token>?clash=1    # Clash / Mihomo
+https://<cert-domain>:<sub-port>/<token>?singbox=1  # sing-box
+https://<cert-domain>:<sub-port>/<token>/qr         # QR code PNG (token required)
+```
+
+* **Use the cert domain**: the host in the URL must be the certificate domain; using the server IP fails certificate validation.
+* **Renewals apply automatically**: the server reloads the certificate when its files change; no restart needed.
+* **Fallback**: without a valid cert domain (or with only `busybox`) it falls back to HTTP and prints the URL.
+* **Hardening**: the QR image requires a valid token; the server is multi-threaded with connection timeouts so an idle connection cannot block it; HEAD requests return no body.
+* **Upgrading**: re-run the installer (it rewrites the subscription unit and restarts it) to switch; afterwards replace old `http://IP:port/...` subscription URLs in your clients with the new HTTPS domain URL.
+
+---
+
 ## ☁️ Cloudflare WARP & Argo Tunnel Management
 
 * **Cloudflare Argo Tunnel (`cloudflared`)**:
