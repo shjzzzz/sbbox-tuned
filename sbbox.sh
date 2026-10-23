@@ -674,7 +674,7 @@ cert_matches_ym() {
   local names
   names=$(openssl x509 -in "$CERT_DIR/fullchain.cer" -noout -subject -ext subjectAltName 2>/dev/null)
   if echo "$names" | grep -Fwq "$target" || echo "$names" | grep -Fiq "DNS:$target"; then
-    openssl x509 -checkend 86400 -in "$CERT_DIR/fullchain.cer" -noout 2>/dev/null && return 0
+    openssl x509 -checkend 86400 -in "$CERT_DIR/fullchain.cer" -noout >/dev/null 2>&1 && return 0
   fi
   return 1
 }
@@ -683,7 +683,7 @@ cert_matches_ym() {
 sub_tls_domain() {
   command -v python3 >/dev/null 2>&1 || return 1
   local d="${ym:-$(cat "$SB_HOME/ym" 2>/dev/null)}"
-  [ -n "$d" ] && cert_matches_ym "$d" && echo "$d"
+  [ -n "$d" ] && cert_matches_ym "$d" >/dev/null 2>&1 && printf '%s\n' "$d"
 }
 
 get_cert_paths() {
