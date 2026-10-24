@@ -48,12 +48,12 @@ def ns_down():
     sh(f"ip netns del {NS}", check=False); sh("ip link del vh", check=False)
 
 base = json.load(open("/root/sbbox/sbox_client.json"))
-tmpl = {o["tag"]: o for o in base["outbounds"] if o.get("type") == "naive"}
+tmpl = {o["tag"].lower(): o for o in base["outbounds"] if o.get("type") == "naive"}
 
 def build(variants):
     outs, ins, rules = [], [], []
     for i, v in enumerate(variants):
-        o = copy.deepcopy(tmpl[v["base"]])
+        o = copy.deepcopy(tmpl[v["base"].lower()])
         o["tag"] = v["name"]; o["server"] = "10.200.0.1"
         for k, val in v.get("set", {}).items(): o[k] = val
         for k in v.get("unset", []): o.pop(k, None)

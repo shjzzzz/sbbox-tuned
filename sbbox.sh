@@ -333,7 +333,7 @@ install_deps() {
 fw_accept_rule() {
   local ipt="$1" proto="$2" port="$3" pos
   "$ipt" -C INPUT -p "$proto" --dport "$port" -j ACCEPT 2>/dev/null && return 0
-  pos=$("$ipt" -S INPUT 2>/dev/null | awk 'NR>1{n++; if ($0 ~ /-j (REJECT|DROP)/ && $0 !~ /--dport|--sport|--ctstate|--state|-i lo|hashlimit/) {print n; exit}}')
+  pos=$("$ipt" -S INPUT 2>/dev/null | awk 'NR>1{n++; if ($0 ~ /-j (REJECT|DROP|ufw-after-input|ufw-reject-input)/ && $0 !~ /--dport|--sport|--ctstate|--state|-i lo|hashlimit/) {print n; exit}}')
   if [ -n "$pos" ]; then
     "$ipt" -I INPUT "$pos" -p "$proto" --dport "$port" -j ACCEPT 2>/dev/null
   else
@@ -451,10 +451,22 @@ try:
         changed = True
     for ib in data.get('inbounds', []):
         if ib.get('type') == 'naive':
-            if not ib.get('tcp_fast_open'):
-                ib['tcp_fast_open'] = True
+            if ib.get('tcp_fast_open'):
+                ib['tcp_fast_open'] = False
+                changed = True
+            if ib.get('tcp_multi_path'):
+                ib['tcp_multi_path'] = False
+                changed = True
+            if 'tls' in ib and ib['tls'].get('min_version') == '1.3':
+                ib['tls']['min_version'] = '1.2'
                 changed = True
         if ib.get('type') == 'anytls':
+            if ib.get('tcp_fast_open'):
+                ib['tcp_fast_open'] = False
+                changed = True
+            if ib.get('tcp_multi_path'):
+                ib['tcp_multi_path'] = False
+                changed = True
             if 'tls' in ib and ib['tls'].get('min_version') == '1.3':
                 ib['tls']['min_version'] = '1.2'
                 changed = True
@@ -492,10 +504,22 @@ try:
             changed = True
     for ib in data.get('inbounds', []):
         if ib.get('type') == 'naive':
-            if not ib.get('tcp_fast_open'):
-                ib['tcp_fast_open'] = True
+            if ib.get('tcp_fast_open'):
+                ib['tcp_fast_open'] = False
+                changed = True
+            if ib.get('tcp_multi_path'):
+                ib['tcp_multi_path'] = False
+                changed = True
+            if 'tls' in ib and ib['tls'].get('min_version') == '1.3':
+                ib['tls']['min_version'] = '1.2'
                 changed = True
         if ib.get('type') == 'anytls':
+            if ib.get('tcp_fast_open'):
+                ib['tcp_fast_open'] = False
+                changed = True
+            if ib.get('tcp_multi_path'):
+                ib['tcp_multi_path'] = False
+                changed = True
             if 'tls' in ib and ib['tls'].get('min_version') == '1.3':
                 ib['tls']['min_version'] = '1.2'
                 changed = True
@@ -2012,7 +2036,7 @@ EOF
     fi
   fi
 
-  # Naiveproxy (HTTP/3 QUIC + HTTP/2 TLS 1.3 极速抗探测)
+  # Naiveproxy (HTTP/3 QUIC + HTTP/2 TLS 双模极速抗探测)
   if [ -n "$nvp" ] && [ "$CERT_OK" = 1 ]; then
     cat >> "$SB_CONF" <<EOF
         {
@@ -2020,8 +2044,8 @@ EOF
             "tag": "naive-in",
             "listen": "::",
             "listen_port": $port_nv,
-            "tcp_fast_open": true,
-            "tcp_multi_path": true,
+            "tcp_fast_open": false,
+            "tcp_multi_path": false,
             "udp_fragment": true,
             "udp_timeout": "300s",
             "quic_congestion_control": "bbr",
@@ -2034,7 +2058,7 @@ EOF
             "tls": {
                 "enabled": true,
                 "server_name": "$ym",
-                "min_version": "1.3",
+                "min_version": "1.2",
                 "alpn": [ "h3", "h2" ],
                 "certificate_path": "$CERT_DIR/fullchain.cer",
                 "key_path": "$CERT_DIR/private.key",
@@ -2052,7 +2076,7 @@ EOF
             "tag": "anytls-in",
             "listen": "::",
             "listen_port": $port_any,
-            "tcp_fast_open": true,
+            "tcp_fast_open": false,
             "tcp_multi_path": false,
             "disable_tcp_keep_alive": false,
             "tcp_keep_alive": "30s",
@@ -2402,7 +2426,7 @@ gen_client() {
 
     # v2.7.28：去掉 http3:// / http2:// 两条同入站的重复写法（v2rayN 不识别，导入即 -1）
     nv1_link="naive+quic://$(rawurlencode "$nv_user"):$(rawurlencode "$nv_pw")@$add:$port_nv?quic=1&congestion_control=bbr&security=tls&sni=$sni&insecure=0&allowInsecure=0&padding=1$nv_uot$nv_pcs$nv_pin#Naive-H3"
-    nv2_link="naive+https://$(rawurlencode "$nv_user"):$(rawurlencode "$nv_pw")@$add:$port_nv?quic=1&congestion_control=bbr&security=tls&sni=$sni&insecure=0&allowInsecure=0&padding=1$nv_uot$nv_pcs$nv_pin#Naive-H2"
+    nv2_link="naive+https://$(rawurlencode "$nv_user"):$(rawurlencode "$nv_pw")@$add:$port_nv?security=tls&sni=$sni&insecure=0&allowInsecure=0&padding=1$nv_uot$nv_pcs$nv_pin#Naive-H2"
 
     for l in "$nv1_link" "$nv2_link"; do
       echo "$l" >> "$SB_LINK"
@@ -2861,10 +2885,9 @@ class SubHandler(BaseHTTPRequestHandler):
         if is_sr:
             if "noanytls=1" in q_lower:
                 selected_links = [l for l in selected_links if not l.startswith("anytls://")]
-            # 两条 Naive 默认都开 QUIC：小火箭没有 quic=1 开关，只能靠 http3:// 前缀走 QUIC，
-            # 所以 naive+https:// 也转成 http3://（原先转成 http2:// 会让第二条退回 TCP）。
+            # Naive 转换：naive+quic 走 QUIC (http3://)，naive+https 走 HTTP/2 (http2://)
             selected_links = [("http3://" + l[len("naive+quic://"):]) if l.startswith("naive+quic://")
-                              else ("http3://" + l[len("naive+https://"):]) if l.startswith("naive+https://")
+                              else ("http2://" + l[len("naive+https://"):]) if l.startswith("naive+https://")
                               else l for l in selected_links]
 
         if not selected_links:
@@ -3231,10 +3254,8 @@ gen_client_sbox() {
         "password": "'"$nv_pw"'",
         "insecure_concurrency": 1,
         "stream_receive_window": 67108864,
-        "quic_session_receive_window": 134217728,
         "udp_over_tcp": true,
-        "quic": true,
-        "quic_congestion_control": "bbr",
+        "quic": false,
         "bind_address_no_port": true,
         "udp_fragment": true,
         "tls": { "enabled": true, "insecure": false, "server_name": "'"$sni"'" }
@@ -5465,7 +5486,7 @@ status_show() {
     echo -e "  内核版本:     $("$SB_BIN" version 2>/dev/null | head -1)"
     if [ "$cur_ch" = "pre" ]; then
       echo -e "  更新通道:     ${YELLOW}pre-release (测试版，跟踪最新特性)${NC}"
-      echo -e "  已启特性:     ${GREEN}DNS乐观缓存、1.14/1.15原生API、1.15 cache_file批量缓冲(1MB/1m)、NaiveProxy H2/H3全QUIC极速加速、AnyTLS 0-RTT会话池/uTLS/全端兼容${NC}"
+      echo -e "  已启特性:     ${GREEN}DNS乐观缓存、1.14/1.15原生API、1.15 cache_file批量缓冲(1MB/1m)、NaiveProxy H2(TCP)/H3(QUIC)双模加速、AnyTLS 0-RTT会话池/uTLS/全端兼容${NC}"
     else
       echo -e "  更新通道:     ${GREEN}stable (官方稳定正式版)${NC}"
     fi
