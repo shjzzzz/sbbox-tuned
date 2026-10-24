@@ -2374,10 +2374,10 @@ gen_client() {
     local enc_pw_hy; enc_pw_hy=$(rawurlencode "$pw_hy")
 
     # 主 Hysteria2 节点（全速原生 BBR 拥塞控制，无人工限速）
-    hy2_link="hysteria2://$enc_pw_hy@$add:$port_hy2?alpn=h3$hy2_insecure_q$hyps$hy_bw_q&sni=$sni$hy2_pin$hyobfs_q#Hysteria2"
+    hy2_link="hysteria2://$enc_pw_hy@$add:$port_hy2?alpn=h3$hy2_insecure_q$hyps$hy_bw_q&sni=$sni$hy2_pin$hyobfs_q#Hysteria2-TLS-BBR-Salamander"
     echo "$hy2_link" >> "$SB_LINK"
 
-    echo "💣【 🥇 Hysteria2 (高速主力) 】节点信息如下："
+    echo "💣【 🥇 Hysteria2-TLS-BBR-Salamander (高速主力) 】节点信息如下："
     echo "$hy2_link"
     echo
   fi
@@ -3144,7 +3144,7 @@ gen_client_sbox() {
     fi
     ob+=('{
         "type": "hysteria2",
-        "tag": "Hysteria2",
+        "tag": "Hysteria2-TLS-BBR-Salamander",
         "server": "'"$add"'",
         "server_port": '"$port_hy2"',
         '"$hy_ports_json"'
@@ -3154,7 +3154,7 @@ gen_client_sbox() {
         "bind_address_no_port": true,
         "tls": { "enabled": true, "server_name": "'"$sni"'", "insecure": '"$msins"', "alpn": ["h3"]'"$hy2_tls_extra"' }
     }')
-    tags+=("Hysteria2")
+    tags+=("Hysteria2-TLS-BBR-Salamander")
   fi
 
   # 2. 🥈 AnyTLS (新一代 TCP 主力)
@@ -3493,7 +3493,7 @@ gen_client_clash() {
     down: \"$hydown Mbps\""
     fi
     proxies="$proxies
-  - name: Hysteria2
+  - name: Hysteria2-TLS-BBR-Salamander
     server: $add
     port: $port_hy2
     type: hysteria2$hy_clash_bw
@@ -3502,7 +3502,7 @@ gen_client_clash() {
     sni: $sni
     skip-cert-verify: $msins"
     groups="$groups
-      - Hysteria2"
+      - Hysteria2-TLS-BBR-Salamander"
   fi
 
   # 2. 🥈 AnyTLS (新一代 TCP 主力)
