@@ -1009,11 +1009,34 @@ sysctl_get() { sysctl -n "$1" 2>/dev/null || true; }
 # drop-in 而不是改 /etc/systemd/system.conf 本体：drop-in 优先级更高，别的脚本以后
 # 再改主文件也覆盖不掉我们，且 sbbox tune off 删一个文件即可干净回滚。
 align_default_nofile() {
-  [ "$SERVICE_TYPE" = "systemd" ] || return 0
-
   local nr_open cur
   nr_open=$(sysctl_get fs.nr_open)
   case "$nr_open" in ''|*[!0-9]*) return 0 ;; esac
+
+  # 1. 清理 /etc/profile 与 /etc/profile.d/ 中第三方脚本遗留的全局 ulimit 语句
+  # 避免非 root 用户登录时报 "-bash: ulimit: open files: cannot modify limit: Operation not permitted"
+  if [ -f /etc/profile ]; then
+    if grep -qE "ulimit[[:space:]]+-[A-Za-z]*n[[:space:]]+[0-9]+" /etc/profile 2>/dev/null; then
+      sed -i -E "/ulimit[[:space:]]+-[A-Za-z]*n[[:space:]]+[0-9]+/d" /etc/profile 2>/dev/null || true
+      info "已清理 /etc/profile 中遗留的全局 ulimit 语句（修复非 root 登录时的 Operation not permitted 报错）"
+    fi
+  fi
+  local pf
+  for pf in /etc/profile.d/*.sh; do
+    [ -f "$pf" ] || continue
+    if grep -qE "ulimit[[:space:]]+-[A-Za-z]*n[[:space:]]+[0-9]+" "$pf" 2>/dev/null; then
+      sed -i -E "/ulimit[[:space:]]+-[A-Za-z]*n[[:space:]]+[0-9]+/d" "$pf" 2>/dev/null || true
+      info "已清理 ${pf} 中遗留的全局 ulimit 语句"
+    fi
+  done
+
+  # 2. 修复 /etc/security/limits.conf 中大于 fs.nr_open 的越界配置
+  if [ -f /etc/security/limits.conf ]; then
+    sed -i -E "s/nofile[[:space:]]+[0-9]+/nofile ${nr_open}/g" /etc/security/limits.conf 2>/dev/null || true
+  fi
+
+  # 3. 对齐 systemd DefaultLimitNOFILE
+  [ "$SERVICE_TYPE" = "systemd" ] || return 0
 
   cur=$(systemctl show -p DefaultLimitNOFILE --value 2>/dev/null)
   # infinity 同样越界（systemd 会解析成远大于 nr_open 的值）
@@ -1086,7 +1109,9 @@ if [ -n "$def_dev" ]; then
       for ipt in iptables ip6tables; do
         command -v "$ipt" >/dev/null 2>&1 || continue
         "$ipt" -t mangle -C POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || \
-          "$ipt" -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null
+          "$ipt" -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+        "$ipt" -t mangle -C OUTPUT -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || \
+          "$ipt" -t mangle -A OUTPUT -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
       done
       command -v netfilter-persistent >/dev/null 2>&1 && netfilter-persistent save >/dev/null 2>&1
     fi
@@ -1100,6 +1125,16 @@ if [ -n "$def_dev" ]; then
   # dhcpcd 续租会把 9000 写回路由：不再接受 DHCP 下发的 MTU，并在租约事件后兜底一次
   if [ -f /etc/dhcpcd.conf ] && grep -q '^option interface_mtu' /etc/dhcpcd.conf; then
     sed -i 's/^option interface_mtu$/nooption interface_mtu/' /etc/dhcpcd.conf 2>/dev/null || true
+  fi
+  if command -v dhcpcd >/dev/null 2>&1 && [ ! -f /etc/dhcpcd.exit-hook ]; then
+    cat > /etc/dhcpcd.exit-hook <<'MTUHOOK'
+# 租约更新后把本接口所有路由 MTU 钉回 1500（DHCP 下发 9000 巨帧会产生公网 PMTU 黑洞，影响 UDP/QUIC 节点）
+case "$reason" in BOUND|RENEW|REBIND|REBOOT|STATIC)
+  ip -4 route show dev "$interface" 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="mtu" && $(i+1)>1500){print; break}}' | sed 's/ mtu [0-9]*//' | while read -r r; do
+    ip route change $r dev "$interface" mtu 1500 2>/dev/null
+  done ;;
+esac
+MTUHOOK
   fi
 
   # 收发环形队列拉到硬件上限与通用分片卸载
@@ -1120,7 +1155,12 @@ fi
 
 # 3. RPS/RFS 多核软中断均衡（仅多核）+ fq 队列（仅在 default_qdisc=fq 即 BBR 可用时设置）
 cores=$(nproc 2>/dev/null || echo 1)
-rps_mask=$(printf '%x' $(( (1 << cores) - 1 )))
+[ "$cores" -lt 1 ] && cores=1
+if [ "$cores" -le 64 ]; then
+  rps_mask=$(printf '%x' $(( (1 << cores) - 1 )))
+else
+  rps_mask=$(python3 -c "print(hex((1 << $cores) - 1)[2:])" 2>/dev/null || printf '%x' -1)
+fi
 flow_entries=$((8192 * cores))
 want_fq=0
 [ "$(sysctl -n net.core.default_qdisc 2>/dev/null)" = "fq" ] && command -v tc >/dev/null 2>&1 && want_fq=1
@@ -1363,7 +1403,7 @@ apply_tuning() {
   try_sysctl net.ipv4.tcp_max_syn_backlog "$NETDEV_BACKLOG"
   try_sysctl net.ipv4.tcp_max_tw_buckets 65536
   try_sysctl net.ipv4.ip_local_port_range "1024 65535"
-  try_sysctl net.ipv4.ip_local_reserved_ports "8001,8002,8003,8443,8445,8446,8447,13547,17781,18448,19142,27668,27802,28443,29390,38969"
+  try_sysctl net.ipv4.ip_local_reserved_ports "8001,8002,8003,8443,8445,8446,8447,10489,10723,10800-10809,11801-11806,13547,17781,18448,18793,19142,23106,27295,27668,27802,28443,29390,38969,62808"
 
   # conntrack 仅在模块已加载时调整。
   # 开机时 systemd-sysctl 早于 iptables / Docker 加载 nf_conntrack，键还不存在就被静默跳过，
@@ -1384,6 +1424,8 @@ apply_tuning() {
   # 后续新连接一开始就被压在低速率上
   try_sysctl net.ipv4.tcp_no_metrics_save 1
   try_sysctl net.ipv4.tcp_notsent_lowat 524288
+  try_sysctl net.ipv4.tcp_frto 2
+  try_sysctl net.ipv4.tcp_early_retrans 3
   try_sysctl net.ipv4.tcp_syncookies 1
   try_sysctl net.ipv4.tcp_tw_reuse 1
   try_sysctl net.ipv4.tcp_ecn 0
@@ -1472,7 +1514,12 @@ LIMITSEOF
     [ "${MEM_MB:-0}" -gt 0 ] && [ "$MEM_MB" -lt 2048 ] && GOMEM_LINE="Environment=\"GOMEMLIMIT=$((MEM_MB * 60 / 100))MiB\""
     install -d -m 755 "$dir" 2>/dev/null || true
     cat > "${dir}/${dropin}" <<DROPINEOF 2>/dev/null || warn "写入 ${SB_SERVICE} drop-in 失败"
+[Unit]
+StartLimitIntervalSec=0
+
 [Service]
+Restart=always
+RestartSec=2
 LimitNOFILE=1048576
 LimitNPROC=infinity
 Environment="GOGC=200"
@@ -1499,6 +1546,10 @@ DROPINEOF
   if command -v iptables >/dev/null 2>&1; then
     iptables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu >/dev/null 2>&1 \
       || iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+    iptables -t mangle -C POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu >/dev/null 2>&1 \
+      || iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+    iptables -t mangle -C OUTPUT -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu >/dev/null 2>&1 \
+      || iptables -t mangle -A OUTPUT -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
   fi
 
   # ---------- 网卡层：fq 队列 + UDP 分片卸载 ----------
@@ -5850,7 +5901,7 @@ cmd_menu() {
       4) ( sbrestart ) ;;
       5) read -rp "  显示最近多少行 (默认 20): " a; ( sblog "${a:-20}" ) ;;
       6) read -rp "  直接回车按当前通道更新，或输入 stable / pre: " a; ( cmd_update $a ) ;;
-      7) read -rp "  show / on / off / client / win / mac / linux: " a; ( cmd_tune "${a:-show}" ) ;;
+      7) read -rp "  show / on / off / client / win / mac / linux / sb: " a; ( cmd_tune "${a:-show}" ) ;;
       8) read -rp "  show / on / off / speed [Mbps]: " a; ( cmd_brutal ${a:-show} ) ;;
       9) read -rp "  输入 上行 下行 (Mbps，如 100 1000): " a; ( cmd_speed $a ) ;;
       10) read -rp "  status / renew / sync / hook (默认 status): " a; ( cert_mgmt "${a:-status}" ) ;;
@@ -5900,7 +5951,7 @@ main() {
       exit ;;
     hy2)    shift; cmd_hy2 "$@"; exit ;;
     log)    sblog "$2"; exit ;;
-    tune)   shift; cmd_tune "$@"; exit ;;   # 安装期已自动 on，off 用于回滚
+    tune|tuning) shift; cmd_tune "$@"; exit ;;   # 安装期已自动 on，off 用于回滚
     cert)   shift; cert_mgmt "$@"; exit ;;
     sub)    shift; cmd_sub "$@"; exit ;;
     hop)    shift; cmd_hop "$@"; exit ;;
@@ -6314,13 +6365,29 @@ EOF
   echo ""
 }
 
+tune_client_sb() {
+  echo -e "${CYAN}======================================================${NC}"
+  echo -e "${CYAN}   sing-box 客户端 5 节点核心加速关键配置 (1000M 版)    ${NC}"
+  echo -e "${CYAN}======================================================${NC}"
+  echo "  - FakeIP 零延迟解析:   fakeip.enabled: true, independent_cache: true (IPv6 池: 2001:2::/48 避开 Chrome 141+ PNA 警告)"
+  echo "  - Hysteria2 带宽:      默认不声明（BBR）；确知线路带宽时再设 up_mbps / down_mbps"
+  echo "  - TCP 快速握手 (TFO):  tcp_fast_open: true (VLESS / Naive / SS)"
+  echo "  - Vision 零拷贝流控:   flow: xtls-rprx-vision, packet_encoding: xudp"
+  echo "  - TUN 网卡极速优化:    mtu: 1480, stack: mixed, endpoint_independent_nat: true"
+  echo "  - 智能秒级故障转移:    urltest 测速周期 3m, connect_timeout: 3s"
+  echo ""
+  echo -e "${YELLOW}[+] 完整配置可直接通过订阅地址 ?singbox=1 获取${NC}"
+  echo ""
+}
+
 # 客户端调优指南（Windows / macOS / Linux 客户端本机执行，非服务端）
 tune_client() {
   case "${1:-all}" in
     win|windows) tune_client_win ;;
     mac|macos)   tune_client_mac ;;
     linux)       tune_client_linux ;;
-    *)           tune_client_win; tune_client_mac; tune_client_linux ;;
+    sb|singbox)  tune_client_sb ;;
+    *)           tune_client_win; tune_client_mac; tune_client_linux; tune_client_sb ;;
   esac
 }
 
@@ -6331,8 +6398,8 @@ cmd_tune() {
     show)        tune_show ;;
     on)          apply_tuning ;;
     off|rollback) tune_off ;;
-    client|win|windows|mac|macos|linux) tune_client "$action" ;;
-    *) echo "用法: sbbox tune [show|on|off|client|win|mac|linux]" ;;
+    client|win|windows|mac|macos|linux|sb|singbox) tune_client "$action" ;;
+    *) echo "用法: sbbox tune [show|on|off|client|win|mac|linux|sb]" ;;
   esac
 }
 
