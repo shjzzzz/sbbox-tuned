@@ -2426,7 +2426,9 @@ gen_client() {
 
     # v2.7.28：去掉 http3:// / http2:// 两条同入站的重复写法（v2rayN 不识别，导入即 -1）
     nv1_link="naive+quic://$(rawurlencode "$nv_user"):$(rawurlencode "$nv_pw")@$add:$port_nv?quic=1&congestion_control=bbr&security=tls&sni=$sni&insecure=0&allowInsecure=0&padding=1$nv_uot$nv_pcs$nv_pin#Naive-H3"
-    nv2_link="naive+https://$(rawurlencode "$nv_user"):$(rawurlencode "$nv_pw")@$add:$port_nv?quic=1&congestion_control=bbr&security=tls&sni=$sni&insecure=0&allowInsecure=0&padding=1$nv_uot$nv_pcs$nv_pin#Naive-H2"
+    # 两条都用 naive+quic:// 方案：v2rayN 导入时只按链接方案判断 QUIC（NaiveFmt.cs：scheme 含 "quic" 才置 NaiveQuic），
+    # 不读 quic=1 参数，naive+https:// 导入后 QUIC 开关永远是关的。两条靠备注名 Naive-H3 / Naive-H2 区分。
+    nv2_link="naive+quic://$(rawurlencode "$nv_user"):$(rawurlencode "$nv_pw")@$add:$port_nv?quic=1&congestion_control=bbr&security=tls&sni=$sni&insecure=0&allowInsecure=0&padding=1$nv_uot$nv_pcs$nv_pin#Naive-H2"
 
     for l in "$nv1_link" "$nv2_link"; do
       echo "$l" >> "$SB_LINK"
