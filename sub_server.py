@@ -298,9 +298,9 @@ class SubHandler(BaseHTTPRequestHandler):
         if is_sr:
             if "noanytls=1" in q_lower:
                 selected_links = [l for l in selected_links if not l.startswith("anytls://")]
-            # Naive 转换：naive+quic 走 QUIC (http3://)，naive+https 走 HTTP/2 (http2://)
+            # 两条 Naive 默认都开 QUIC：小火箭没有 quic=1 开关，只能靠 http3:// 前缀走 QUIC，所以 naive+https:// 也转成 http3://
             selected_links = [("http3://" + l[len("naive+quic://"):]) if l.startswith("naive+quic://")
-                              else ("http2://" + l[len("naive+https://"):]) if l.startswith("naive+https://")
+                              else ("http3://" + l[len("naive+https://"):]) if l.startswith("naive+https://")
                               else l for l in selected_links]
 
         if not selected_links:
