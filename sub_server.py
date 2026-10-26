@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import sys, os, re, base64, json, ssl
+import sys, os, re, base64, json, ssl, time, threading
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import unquote
 
@@ -9,6 +9,12 @@ SB_HOME = os.path.dirname(WEB_DIR.rstrip("/"))
 # 可选 HTTPS：argv[3]=证书链 argv[4]=私钥；缺省或加载失败则退回明文 HTTP
 TLS_CERT = sys.argv[3] if len(sys.argv) > 3 else ""
 TLS_KEY = sys.argv[4] if len(sys.argv) > 4 else ""
+
+# 订阅端口防爆破频次限制 (内存限流器)
+_failed_ip_attempts = {}
+_ip_lock = threading.Lock()
+MAX_FAILURES_WINDOW = 60
+MAX_FAILURES_ALLOWED = 10
 
 # 订阅端口监听 0.0.0.0，请求路径必须白名单校验后才能拼进 WEB_DIR，
 # 否则 "/../../../etc/passwd" 会变成公网任意文件读取。
@@ -142,6 +148,15 @@ class SubHandler(BaseHTTPRequestHandler):
                 self.wfile = self._real_wfile
 
     def do_GET(self):
+        client_ip = self.client_address[0]
+        now = time.time()
+        with _ip_lock:
+            attempts = [t for t in _failed_ip_attempts.get(client_ip, []) if now - t < MAX_FAILURES_WINDOW]
+            if len(attempts) >= MAX_FAILURES_ALLOWED:
+                self.send_error(429)
+                return
+            _failed_ip_attempts[client_ip] = attempts
+
         raw_path = self.path.split("#")[0]
         query = raw_path.split("?", 1)[1] if "?" in raw_path else ""
         token_path = unquote(raw_path.split("?")[0]).lstrip("/")
@@ -173,6 +188,8 @@ class SubHandler(BaseHTTPRequestHandler):
 
         token_file = resolve_token_file(token_path)
         if token_file is None:
+            with _ip_lock:
+                _failed_ip_attempts.setdefault(client_ip, []).append(time.time())
             self.send_response(404)
             self.end_headers()
             return
@@ -334,6 +351,33 @@ class TLSServer(ThreadingHTTPServer):
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             ctx.minimum_version = ssl.TLSVersion.TLSv1_2
             ctx.load_cert_chain(TLS_CERT, TLS_KEY)
+
+            # 对抗主动探测与域名嗅探：未知 SNI 或直接 IP 探测直接拒绝握手，不泄露证书主体
+            valid_domains = set()
+            ym_file = os.path.join(SB_HOME, "ym")
+            if os.path.isfile(ym_file):
+                try:
+                    with open(ym_file, "r", encoding="utf-8") as yf:
+                        d = yf.read().strip().lower()
+                        if d: valid_domains.add(d)
+                except Exception: pass
+            try:
+                cert_dict = ssl._ssl._test_decode_cert(TLS_CERT)
+                for k, v in cert_dict.get("subjectAltName", []):
+                    if k == "DNS": valid_domains.add(v.lower())
+                for sub in cert_dict.get("subject", []):
+                    for k, v in sub:
+                        if k == "commonName": valid_domains.add(v.lower())
+            except Exception: pass
+
+            def _sni_callback(sock, req_sni, cb_ctx):
+                if not req_sni:
+                    return ssl.ALERT_DESCRIPTION_UNRECOGNIZED_NAME
+                if valid_domains and req_sni.lower() not in valid_domains:
+                    return ssl.ALERT_DESCRIPTION_UNRECOGNIZED_NAME
+                return None
+
+            ctx.sni_callback = _sni_callback
             self._ctx, self._stamp = ctx, stamp
         return self._ctx
 
