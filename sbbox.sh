@@ -3696,6 +3696,7 @@ gen_client_clash() {
     reality-opts:
       public-key: $reality_pub
       short-id: $reality_sid
+      support-x25519mlkem768: true
     client-fingerprint: chrome
     packet-encoding: xudp
     tfo: true
