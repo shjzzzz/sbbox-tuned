@@ -7,9 +7,16 @@
 
 ---
 
-## 🌟 最新更新亮点 (v2.7.75 / 2026-10-29)
+## 🌟 最新更新亮点 (v2.7.76 / 2026-10-30)
 
+- **网络栈与流控全量对齐加固**：规范化全客户端订阅中 Naiveproxy 双节点（`Naive-H3` 与 `Naive-H2`）的 QUIC 拥塞控制与 128MB 极限接收窗口（`quic_session_receive_window`）；完善 OCI 等云厂商 9000 巨帧 PMTU 黑洞抑制与路由 MTU 自愈。
 - **Mihomo 后量子混合握手适配 (`support-x25519mlkem768`)**：在生成的 Mihomo 客户端配置中为 `reality-opts` 补充 `support-x25519mlkem768: true`，适配新版 REALITY 对后量子密钥交换份额的严格校验。
+
+---
+
+## 🌟 历史更新亮点 (v2.7.75 / 2026-10-29)
+
+- **Mihomo 后量子混合握手适配**：基础引入 Mihomo reality-opts 新增 `support-x25519mlkem768` 兼容新版 Xray。
 
 ---
 
