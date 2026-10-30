@@ -46,7 +46,7 @@ SYSCTL_CONF="/etc/sysctl.d/99-sbbox.conf"
 LIMITS_CONF="/etc/security/limits.d/99-sbbox.conf"
 SB_SERVICE="sbbox"
 SB_SEC_DIR="$SB_HOME/sec"
-SBBOX_VERSION="v2.7.76"
+SBBOX_VERSION="v2.7.77"
 SB_URL="https://raw.githubusercontent.com/shjzzzz/sbbox-tuned/main/sbbox.sh"
 # root 装到 /usr/local/bin（始终在 PATH 中）；非 root 退回 ~/bin
 if [ "$(id -u 2>/dev/null)" = "0" ] && [ -d /usr/local/bin ]; then
@@ -1403,7 +1403,7 @@ apply_tuning() {
   try_sysctl net.ipv4.tcp_max_syn_backlog "$NETDEV_BACKLOG"
   try_sysctl net.ipv4.tcp_max_tw_buckets 65536
   try_sysctl net.ipv4.ip_local_port_range "1024 65535"
-  try_sysctl net.ipv4.ip_local_reserved_ports "8001,8002,8003,8443,8445,8446,8447,10489,10723,10800-10809,11801-11806,13547,17781,18448,18793,19142,23106,27295,27668,27802,28443,29390,38969,62808"
+  try_sysctl net.ipv4.ip_local_reserved_ports "8001,8002,8003,8443,8445,8446,8447,10489,10723,10800-10809,11801-11806,13547,16387,17781,18048,18448,18793,19142,23106,25742,27295,27668,27802,28443,29390,29879,38969,62808"
 
   # conntrack 仅在模块已加载时调整。
   # 开机时 systemd-sysctl 早于 iptables / Docker 加载 nf_conntrack，键还不存在就被静默跳过，
@@ -1456,6 +1456,8 @@ apply_tuning() {
   # ---------- 内存行为 ----------
   if [ "$MEM_MB" -ge 4096 ]; then try_sysctl vm.swappiness 10; else try_sysctl vm.swappiness 30; fi
   try_sysctl vm.vfs_cache_pressure 50
+  try_sysctl vm.dirty_background_ratio 5
+  try_sysctl vm.dirty_ratio 10
   # 高速率收包时 skb 在软中断里做原子分配，不能等回收；给保留页留余量，防突发下 page allocation failure 丢包。
   case "$TUNE_TIER" in
     large*) try_sysctl vm.min_free_kbytes 65536 ;;

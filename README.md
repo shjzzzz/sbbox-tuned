@@ -7,7 +7,15 @@
 
 ---
 
-## 🌟 最新更新亮点 (v2.7.76 / 2026-10-30)
+## 🌟 最新更新亮点 (v2.7.77 / 2026-10-30)
+
+- **跨套件全代理端口互斥锁定**：在 `ip_local_reserved_ports` 中全量纳入并锁定同机运行的 Xray 与 sbbox 端口（16387, 18048, 25742, 29879 等），杜绝系统出站短连接随机占用代理监听引发的冲突。
+- **内存行为与脏页刷盘统一**：注入 `vm.dirty_background_ratio = 5` 与 `vm.dirty_ratio = 10`，平滑高并发大流量下的磁盘 I/O。
+- **TCP Brutal 协同调优**：确立主干流量统一走原生自适应 BBRv3，Brutal 温备通道规则对齐 500 Mbps 黄金速率，杜绝客户端下行恶性丢包。
+
+---
+
+## 🌟 历史更新亮点 (v2.7.76 / 2026-10-30)
 
 - **网络栈与流控全量对齐加固**：规范化全客户端订阅中 Naiveproxy 双节点（`Naive-H3` 与 `Naive-H2`）的 QUIC 拥塞控制与 128MB 极限接收窗口（`quic_session_receive_window`）；完善 OCI 等云厂商 9000 巨帧 PMTU 黑洞抑制与路由 MTU 自愈。
 - **Mihomo 后量子混合握手适配 (`support-x25519mlkem768`)**：在生成的 Mihomo 客户端配置中为 `reality-opts` 补充 `support-x25519mlkem768: true`，适配新版 REALITY 对后量子密钥交换份额的严格校验。
