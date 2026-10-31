@@ -6254,81 +6254,95 @@ main() {
   detect_env
   # 支持 `bash sbbox.sh tup=1 hyp=1 ...` 位置参数形式：将 key=value 参数转换为环境变量
   # （与 `tup=1 bash sbbox.sh` 环境变量前缀形式等价，二者可混用）
+  local cmd="" has_install_args=0
   for arg in "$@"; do
     case "$arg" in
-      *=*) export "$arg" ;;
+      *=*)
+        export "$arg"
+        has_install_args=1
+        ;;
+      install|reinstall)
+        has_install_args=1
+        ;;
+      *)
+        if [ -z "$cmd" ]; then
+          cmd="$arg"
+        fi
+        ;;
     esac
   done
-  local cmd="${1:-}"
 
   # sbbox <命令> -h|--help 只查看用法，不执行命令
   case "${2:-}" in
-    -h|--help) usage_for "$cmd" && exit 0 ;;
+    -h|--help) [ -n "$cmd" ] && usage_for "$cmd" && exit 0 ;;
   esac
 
-  case "$cmd" in
-    menu)       cmd_menu; exit ;;
-    list|info)  cmd_node_list; exit ;;
-    status)     status_show; exit ;;
-    res|restart) sbrestart; exit ;;
-    up|update)
-      shift; cmd_update "$@"
-      # v2.7.35：顺带检查外置 Hysteria2 与 tcp-brutal 新版本
-      { check_hy2_update; check_tcp_brutal_update; } 2>&1 | tee >(logger -t sbbox-autoupdate)
-      exit ;;
-    hy2)        shift; cmd_hy2 "$@"; exit ;;
-    log)        sblog "${2:-20}"; exit ;;
-    tune|tuning) shift; cmd_tune "$@"; exit ;;   # 安装期已自动 on，off 用于回滚
-    ecn)        shift; cmd_ecn "$@"; exit ;;
-    conflict)   cmd_conflict; exit ;;
-    portconflict) cmd_portconflict; exit ;;
-    cert)       shift; cert_mgmt "$@"; exit ;;
-    sub)        shift; cmd_sub "$@"; exit ;;
-    hop)        shift; cmd_hop "$@"; exit ;;
-    speed|bw)   shift; cmd_speed "$@"; exit ;;
-    brutal)     shift; cmd_brutal "$@"; exit ;;
-    port)       shift; cmd_port "$@"; exit ;;
-    warp)       shift; cmd_warp "$@"; exit ;;
-    argo)       shift; cmd_argo "$@"; exit ;;
-    block)      shift; cmd_block "$@"; exit ;;
-    doctor)     doctor; exit ;;
-    ports)      cmd_ports; exit ;;
-    selftest)   cmd_selftest; exit ;;
-    proto)      shift; cmd_proto "$@"; exit ;;
-    rotate)     cmd_rotate; exit ;;
-    del|uninstall) cleandel; exit ;;
-    version)
-      [[ -x "$SB_BIN" ]] && "$SB_BIN" version | head -1
-      echo "sbbox ${SBBOX_VERSION:-unknown} (manage cli)"
-      exit ;;
-    help)
-      if [[ -z "${2:-}" ]]; then
-        usage
-      else
-        usage_for "$2" || { echo "没有 '$2' 的说明，执行 sbbox help 查看全部命令" >&2; exit 1; }
-      fi
-      exit ;;
-    -h|--help)  usage; exit ;;
-    "")
-      if [[ -x "$SB_BIN" ]]; then
-        # 已安装但未指定协议：在终端里直接进入管理菜单；非交互仍显示帮助与状态
-        if [[ -t 0 && -t 1 ]]; then
-          cmd_menu
+  # 纯管理命令模式（未带任何安装类 key=value 参数时触发）
+  if [ "$has_install_args" -eq 0 ]; then
+    case "$cmd" in
+      menu)         cmd_menu; exit ;;
+      list|info)    cmd_node_list; exit ;;
+      status)       status_show; exit ;;
+      res|restart)  sbrestart; exit ;;
+      up|update)
+        shift; cmd_update "$@"
+        # v2.7.35：顺带检查外置 Hysteria2 与 tcp-brutal 新版本
+        { check_hy2_update; check_tcp_brutal_update; } 2>&1 | tee >(logger -t sbbox-autoupdate)
+        exit ;;
+      hy2)          shift; cmd_hy2 "$@"; exit ;;
+      log)          sblog "${2:-20}"; exit ;;
+      tune|tuning)  shift; cmd_tune "$@"; exit ;;   # 安装期已自动 on，off 用于回滚
+      ecn)          shift; cmd_ecn "$@"; exit ;;
+      conflict)     cmd_conflict; exit ;;
+      portconflict) cmd_portconflict; exit ;;
+      cert)         shift; cert_mgmt "$@"; exit ;;
+      sub)          shift; cmd_sub "$@"; exit ;;
+      hop)          shift; cmd_hop "$@"; exit ;;
+      speed|bw)     shift; cmd_speed "$@"; exit ;;
+      brutal)       shift; cmd_brutal "$@"; exit ;;
+      port)         shift; cmd_port "$@"; exit ;;
+      warp)         shift; cmd_warp "$@"; exit ;;
+      argo)         shift; cmd_argo "$@"; exit ;;
+      block)        shift; cmd_block "$@"; exit ;;
+      doctor)       doctor; exit ;;
+      ports)        cmd_ports; exit ;;
+      selftest)     cmd_selftest; exit ;;
+      proto)        shift; cmd_proto "$@"; exit ;;
+      rotate)       cmd_rotate; exit ;;
+      del|uninstall) cleandel; exit ;;
+      version)
+        [ -x "$SB_BIN" ] && "$SB_BIN" version | head -1
+        echo "sbbox ${SBBOX_VERSION:-unknown} (manage cli)"
+        exit ;;
+      help)
+        if [ -z "${2:-}" ]; then
+          usage
+        else
+          usage_for "$2" || { echo "没有 '$2' 的说明，执行 sbbox help 查看全部命令" >&2; exit 1; }
+        fi
+        exit ;;
+      -h|--help)    usage; exit ;;
+      "")
+        if [ -x "$SB_BIN" ]; then
+          # 已安装且未带任何参数：在交互终端里进入管理菜单；非交互则显示帮助与状态
+          if [ -t 0 ] && [ -t 1 ]; then
+            cmd_menu
+            exit
+          fi
+          usage
+          status_show
           exit
         fi
-        usage
-        status_show
-        exit
-      fi
-      ;;
-    *)
-      if [[ -x "$SB_BIN" ]]; then
-        echo "未知命令: $cmd（执行 sbbox help <命令> 查看用法）" >&2
-        usage
-        exit 1
-      fi
-      ;;
-  esac
+        ;;
+      *)
+        if [ -x "$SB_BIN" ]; then
+          echo "未知命令: $cmd（执行 sbbox help <命令> 查看用法）" >&2
+          usage
+          exit 1
+        fi
+        ;;
+    esac
+  fi
 
 
   # 安装流程
@@ -6341,9 +6355,9 @@ main() {
       ;;
   esac
 
-  # 全新安装且没指定任何协议：默认装四大主力（Hysteria2 / Naiveproxy / TUIC / AnyTLS）；
+  # 未指定任何协议：默认装四大主力（Hysteria2 / Naiveproxy / TUIC / AnyTLS）；
   # VLESS-Reality 等备用协议装好后用 sbbox proto reality on 开启。Naiveproxy 与 AnyTLS 必须有真实证书，没给域名就跳过它们。
-  if [ -z "$tup" ] && [ -z "$hyp" ] && [ -z "$nvp" ] && [ -z "$reap" ] && [ -z "$anyp" ] && [ -z "$stlp" ] && [ ! -x "$SB_BIN" ] && [ -z "$reap_off" ]; then
+  if [ -z "$tup" ] && [ -z "$hyp" ] && [ -z "$nvp" ] && [ -z "$reap" ] && [ -z "$anyp" ] && [ -z "$stlp" ] && [ -z "$reap_off" ]; then
     hyp=1 tup=1
     if [ -n "$alns" ] || [ -n "$ym" ]; then
       nvp=1 anyp=1
@@ -6354,21 +6368,10 @@ main() {
   fi
 
   if [ -z "$tup" ] && [ -z "$hyp" ] && [ -z "$nvp" ] && [ -z "$reap" ] && [ -z "$anyp" ] && [ -z "$stlp" ]; then
-    if [ -x "$SB_BIN" ]; then
-      # 已安装但未指定协议：在终端里直接进入管理菜单（v2.7.40）；非交互（管道 / cron）仍显示帮助与状态
-      if [ -t 0 ] && [ -t 1 ]; then
-        cmd_menu
-        exit
-      fi
-      showmode
-      status_show
-      exit
-    else
-      error "未指定任何协议。请至少设置一个：hyp=1 nvp=1 tup=1 (可选 reap=1 anyp=1)"
-      echo ""
-      showmode
-      exit 1
-    fi
+    error "未指定任何协议。请至少设置一个：hyp=1 nvp=1 tup=1 (可选 reap=1 anyp=1)"
+    echo ""
+    showmode
+    exit 1
   fi
 
   mkdir -p "$SB_HOME"
