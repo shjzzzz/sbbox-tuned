@@ -7,7 +7,15 @@
 
 ---
 
-## 🌟 最新更新亮点 (v2.7.77 / 2026-10-30)
+## 🌟 最新更新亮点 (v2.7.78 / 2026-10-31)
+
+- **模仿 xh 统一重构管理终端与数据驱动菜单**：采用数据驱动分层架构（`menu_loop` / `menu_choose` / `menu_onoff` / `menu_ask`），主菜单划分为 7 大功能模块（节点与协议、链路测速自检、系统网络流控、证书安全、生命周期自愈、高级隧道、卸载）与 6 个快捷直达数字；杜绝手敲参数，彻底消除 EOF / 管道关闭时的死循环刷屏。
+- **自适应 VPS 机器配置与流控优化全量对齐**：按 CPU 核心数、物理内存、体系结构、内核页大小（适配 ARM 64KB 页）与出口网卡带宽智能分档（`large` / `medium` / `entry` / `small`），动态自适应 `tcp_mem` / `udp_mem`、BDP 缓冲区、`netdev_budget` 与队列长度；DefaultLimitNOFILE 与 `fs.nr_open` 硬对齐防 205/LIMITS；新增 `sbbox conflict`（内核参数冲突检测）、`sbbox portconflict`（UDP 端口段劫持排查）与 `sbbox ecn`（TCP ECN 拥塞通知）。
+- **CLI 帮助体系与命令自省**：新增 `sbbox help [<命令>]` 与 `sbbox <命令> --help`，未知命令友好提示。
+
+---
+
+## 🌟 历史更新亮点 (v2.7.77 / 2026-10-30)
 
 - **跨套件全代理端口互斥锁定**：在 `ip_local_reserved_ports` 中全量纳入并锁定同机运行的 Xray 与 sbbox 端口（16387, 18048, 25742, 29879 等），杜绝系统出站短连接随机占用代理监听引发的冲突。
 - **内存行为与脏页刷盘统一**：注入 `vm.dirty_background_ratio = 5` 与 `vm.dirty_ratio = 10`，平滑高并发大流量下的磁盘 I/O。
@@ -60,16 +68,23 @@ bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/sbbox-tuned/main/sbbox
 安装完成后直接输入 `sbbox` 即可呼出交互式管理看板：
 
 ```bash
-sbbox status          # 查看 sing-box / nowhere 守护进程、端口与流控状态
-sbbox node            # 查看全部协议参数、连接链接与订阅地址
+sbbox                 # 进入交互式全功能分层导航终端
+sbbox help [<命令>]   # 显示全部命令或指定命令用法 (也可 sbbox <命令> --help)
+sbbox status          # 查看服务运行状态、监听端口与流控指标
+sbbox list            # 查看全部协议参数、连接链接与订阅地址 (别名: sbbox info)
 sbbox sub             # 获取各平台专用订阅链接与终端二维码
-sbbox restart         # 平滑重启 sing-box 及关联 sidecar 进程
-sbbox log             # 查看实时访问日志
-sbbox cert sync       # 证书轮换检查与 SPKI 指纹热重载
-sbbox keepalive on    # 开启后台智能保活自愈机制
-sbbox autoupdate on   # 开启每周内核自动安全平滑更新
-sbbox warp status|update # WARP 出站状态与 WireGuard 凭据轮换更新
-sbbox argo status|update # Cloudflare Argo 隧道状态与一键内核更新
+sbbox res             # 平滑重启 sing-box 及关联外置进程 (别名: sbbox restart)
+sbbox log [行数]      # 查看实时运行日志 (默认 20 行)
+sbbox tune [show|on|off] # 系统级流控调优 (BBRv3+FQ+自适应缓冲区) 与回滚
+sbbox ecn [show|on|off]  # TCP ECN 显式拥塞通知开关
+sbbox conflict        # sysctl 内核参数冲突与覆盖检测
+sbbox portconflict    # UDP 端口段劫持与冲突检测
+sbbox selftest        # 节点本机真实握手自测 (经 127.0.0.1 验证各协议连通性)
+sbbox doctor          # 节点全栈健康诊断与异常自愈 (服务/端口/证书/DNS)
+sbbox cert [status|renew|sync|hook] # SSL 证书全生命周期管理
+sbbox up [stable|pre] # 更新 sing-box 内核版本 (支持 stable 稳定版 / pre 测试版)
+sbbox warp [status|on|off|rotate] # WARP 出站状态与 WireGuard 凭据轮换更新
+sbbox argo [status|update|on|off] # Cloudflare Argo 隧道状态与一键内核更新
 ```
 
 ---

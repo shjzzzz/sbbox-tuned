@@ -39,16 +39,23 @@ bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/sbbox-tuned/main/sbbox
 Run `sbbox` directly in terminal for an interactive dashboard:
 
 ```bash
-sbbox status          # View sing-box and sidecar daemons, ports, and flow stats
-sbbox node            # Display all protocol credentials, links, and subscription URLs
+sbbox                 # Launch interactive categorized navigation terminal
+sbbox help [<command>]# Show all commands or usage for a specific command (or sbbox <cmd> --help)
+sbbox status          # View service health, listening ports, and flow control metrics
+sbbox list            # Display all protocol credentials, links, and subscription URLs (alias: sbbox info)
 sbbox sub             # Output client subscriptions and terminal QR code
-sbbox restart         # Gracefully restart sing-box and associated sidecar services
-sbbox log             # Follow live connection and access logs
-sbbox cert sync       # Check certificate renewals and hot-reload SPKI pinning
-sbbox keepalive on    # Enable background self-healing daemon
-sbbox autoupdate on   # Enable weekly stable auto-updates
-sbbox warp status|update # View WARP outbound status and rotate WireGuard credentials
-sbbox argo status|update # Cloudflare Argo Tunnel status and 1-click kernel update
+sbbox res             # Gracefully restart sing-box and associated sidecar services (alias: sbbox restart)
+sbbox log [lines]     # Follow live connection and access logs (default 20)
+sbbox tune [show|on|off] # Kernel flow control tuning (BBRv3+FQ+adaptive buffer) & rollback
+sbbox ecn [show|on|off]  # TCP Explicit Congestion Notification (ECN) toggle
+sbbox conflict        # Inspect sysctl kernel parameter overrides and conflicts
+sbbox portconflict    # Detect UDP port-range hijacking and conflicts
+sbbox selftest        # Local end-to-end handshake test across all protocols
+sbbox doctor          # Full-stack diagnostic and self-healing (service/ports/certs/DNS)
+sbbox cert [status|renew|sync|hook] # SSL certificate lifecycle management
+sbbox up [stable|pre] # Update sing-box core (stable channel / pre-release channel)
+sbbox warp [status|on|off|rotate] # View WARP outbound status and rotate WireGuard credentials
+sbbox argo [status|update|on|off] # Cloudflare Argo Tunnel status and 1-click kernel update
 ```
 
 ---

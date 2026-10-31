@@ -46,7 +46,7 @@ SYSCTL_CONF="/etc/sysctl.d/99-sbbox.conf"
 LIMITS_CONF="/etc/security/limits.d/99-sbbox.conf"
 SB_SERVICE="sbbox"
 SB_SEC_DIR="$SB_HOME/sec"
-SBBOX_VERSION="v2.7.77"
+SBBOX_VERSION="v2.7.78"
 SB_URL="https://raw.githubusercontent.com/shjzzzz/sbbox-tuned/main/sbbox.sh"
 # root 装到 /usr/local/bin（始终在 PATH 中）；非 root 退回 ~/bin
 if [ "$(id -u 2>/dev/null)" = "0" ] && [ -d /usr/local/bin ]; then
@@ -1658,11 +1658,18 @@ tune_show() {
   fi
   if [ -f "$SYSCTL_CONF" ]; then
     printf '  %-32s %s\n' "调优配置文件" "$SYSCTL_CONF（已启用）"
+    echo ""
+    echo -e "${CYAN}[+] ${SYSCTL_CONF}${NC}"
+    cat "$SYSCTL_CONF"
   elif [ -f /etc/sysctl.d/99-xray-xhttp.conf ]; then
     printf '  %-32s %s\n' "调优配置文件" "/etc/sysctl.d/99-xray-xhttp.conf（已由 xh 启用生效）"
+    echo ""
+    echo -e "${CYAN}[+] /etc/sysctl.d/99-xray-xhttp.conf${NC}"
+    cat /etc/sysctl.d/99-xray-xhttp.conf
   else
-    printf '  %-32s %s\n' "调优配置文件" "未启用（安装期默认已开启，如被移除请 sbbox res 重装）"
+    printf '  %-32s %s\n' "调优配置文件" "未启用（安装期默认已开启，可手动 sbbox tune on 启用）"
   fi
+  [ -f "$LIMITS_CONF" ] && { echo ""; echo -e "${CYAN}[+] ${LIMITS_CONF}${NC}"; cat "$LIMITS_CONF"; }
 }
 
 # 判断某 UDP 端口是否被 nat 表里「端口段」类规则劫持（DNAT/REDIRECT 到别处）。
@@ -4128,7 +4135,7 @@ cmd_hop() {
       gen_client
       info "Hysteria2 端口跳跃已关闭并清理防火墙规则"
       ;;
-    "")
+    ""|show|status)
       if [ -s "$SB_HOME/hyjpt" ]; then
         info "当前 Hysteria2 跳跃端口：$(cat "$SB_HOME/hyjpt")"
       else
@@ -5914,66 +5921,330 @@ cmd_proto() {
   info "$label 已$([ "$act" = on ] && echo 开启 || echo 关闭)，配置与客户端节点已同步。云厂商安全组需自行放行 / 回收对应端口（sbbox ports 可查）。"
 }
 
-# 交互式管理菜单（v2.7.40）：已安装后直接输入 sbbox（在终端里）进入，风格同 xray-xhttp 的 xh。
-# 每个动作都在子 shell 里执行，子命令内部的 exit / 失败只会回到菜单，不会把菜单一起带走。
+# ==================================================
+# 交互式分类导航主菜单 (Interactive Categorized Menu)
+# ==================================================
+
+# 菜单数据：数组首元素是标题，其余元素是 "文案::命令行"。
+# 命令行词拆分后直接执行（不用 eval），参数里不带空格。
+# 嵌套菜单直接写成命令行，如 "menu_choose MENU_PROTO"。
+
+# menu_loop <数组名>：反复显示，直到选 0 或输入结束（EOF）。
+menu_loop() {
+  local -n _m="$1"
+  local items=("${_m[@]:1}") choice
+  while true; do
+    _menu_print "${_m[0]}" "${items[@]}"
+    echo "   0) 返回上一级菜单"
+    read -rp "请选择 [0-${#items[@]}]: " choice || return 0
+    [[ "$choice" == 0 ]] && return 0
+    _menu_exec "$choice" "${items[@]}" || warn "无效选择"
+  done
+}
+
+# menu_choose <数组名>：只选一次；直接回车 = 第 1 项。
+menu_choose() {
+  local -n _m="$1"
+  local items=("${_m[@]:1}") choice
+  _menu_print "${_m[0]}" "${items[@]}"
+  echo "   0) 取消"
+  read -rp "请选择 [0-${#items[@]}，回车=1]: " choice || return 0
+  [[ "$choice" == 0 ]] && return 0
+  _menu_exec "${choice:-1}" "${items[@]}" || warn "无效选择"
+}
+
+# menu_onoff <cmd_*>：查看 / 开启 / 关闭 三选一。
+menu_onoff() {
+  # shellcheck disable=SC2034  # 经 nameref 使用
+  MENU_ONOFF=("${1#cmd_}" "查看状态::$1 show" "开启::$1 on" "关闭::$1 off")
+  menu_choose MENU_ONOFF
+}
+
+# menu_ask <提示> <命令行…>：读一行文本追加为最后一个参数；直接回车则取消。
+menu_ask() {
+  local prompt="$1" v
+  shift
+  read -rp "  ${prompt}: " v || return 0
+  [[ -n "$v" ]] && "$@" "$v"
+  return 0
+}
+
+_menu_print() {
+  local title="$1" i
+  shift
+  local items=("$@")
+  echo ""
+  echo -e "${CYAN}--- ${title} ---${NC}"
+  for ((i = 0; i < ${#items[@]}; i++)); do
+    printf '  %2d) %s\n' "$((i + 1))" "${items[i]%%::*}"
+  done
+}
+
+# _menu_exec <序号> <条目…>：序号越界返回 1；命令自身的返回值不影响菜单。
+_menu_exec() {
+  local n="$1"
+  shift
+  local items=("$@")
+  [[ "$n" =~ ^[0-9]{1,3}$ ]] && ((10#$n >= 1 && 10#$n <= ${#items[@]})) || return 1
+  # shellcheck disable=SC2086
+  ${items[10#$n - 1]#*::}
+  return 0
+}
+
+cmd_node_list() {
+  v4v6; load_state; gen_client
+}
+
+cmd_ports() {
+  load_state; cloud_ports_hint
+}
+
+# 数组按名字经 nameref 使用（menu_loop / menu_choose），ShellCheck 看不到引用，会误报 SC2034。
+# shellcheck disable=SC2034
+_menu_define() {
+  MENU_NODE=("[1] 节点与协议矩阵管理"
+    "查看全部节点参数与客户端链接 (list / info)::cmd_node_list"
+    "查看订阅链接与全端二维码 (sub)::menu_choose MENU_SUB"
+    "协议矩阵启用与开关 (proto)::menu_loop MENU_PROTO"
+    "节点端口管理与重新分配 (port)::menu_choose MENU_PORT"
+    "Hysteria2 端口跳跃管理 (hop)::menu_choose MENU_HOP"
+    "出站分流：屏蔽回国 IP / 广告域名 (block)::menu_choose MENU_BLOCK"
+    "云端防火墙/安全组需放行端口清单 (ports)::cmd_ports")
+
+  MENU_SUB=("订阅链接与二维码管理"
+    "查看订阅链接与二维码::cmd_sub show"
+    "开启 Web 订阅服务::cmd_sub on"
+    "关闭 Web 订阅服务::cmd_sub off")
+
+  MENU_PROTO=("协议矩阵启用与开关"
+    "查看各协议运行状态::cmd_proto show"
+    "Hysteria2 节点开关::menu_choose MENU_PROTO_HY2"
+    "Naiveproxy 节点开关::menu_choose MENU_PROTO_NAIVE"
+    "TUIC 节点开关::menu_choose MENU_PROTO_TUIC"
+    "VLESS-Reality 节点开关::menu_choose MENU_PROTO_REALITY"
+    "AnyTLS 节点开关::menu_choose MENU_PROTO_ANYTLS")
+
+  MENU_PROTO_HY2=("Hysteria2 节点开关"
+    "查看状态::cmd_proto show"
+    "开启 Hysteria2::cmd_proto hy2 on"
+    "关闭 Hysteria2::cmd_proto hy2 off")
+
+  MENU_PROTO_NAIVE=("Naiveproxy 节点开关"
+    "查看状态::cmd_proto show"
+    "开启 Naiveproxy::cmd_proto naive on"
+    "关闭 Naiveproxy::cmd_proto naive off")
+
+  MENU_PROTO_TUIC=("TUIC 节点开关"
+    "查看状态::cmd_proto show"
+    "开启 TUIC::cmd_proto tuic on"
+    "关闭 TUIC::cmd_proto tuic off")
+
+  MENU_PROTO_REALITY=("VLESS-Reality 节点开关"
+    "查看状态::cmd_proto show"
+    "开启 VLESS-Reality::cmd_proto reality on"
+    "关闭 VLESS-Reality::cmd_proto reality off")
+
+  MENU_PROTO_ANYTLS=("AnyTLS 节点开关"
+    "查看状态::cmd_proto show"
+    "开启 AnyTLS::cmd_proto anytls on"
+    "关闭 AnyTLS::cmd_proto anytls off")
+
+  MENU_PORT=("节点端口管理与重新分配"
+    "查看当前各节点监听端口::cmd_port show"
+    "自动随机重新分配全部节点端口 (10000-29999)::cmd_port"
+    "自定义指定端口…::menu_ask [tu] [hy2] [nv] [rea] [any]端口 cmd_port")
+
+  MENU_HOP=("Hysteria2 端口跳跃管理"
+    "查看当前端口跳跃状态::cmd_hop show"
+    "开启/设置端口跳跃范围…::menu_ask 端口范围(如 25000:38000) cmd_hop"
+    "关闭端口跳跃::cmd_hop off")
+
+  MENU_BLOCK=("出站分流规则管理"
+    "查看分流规则状态::cmd_block show"
+    "屏蔽回国 IP 流量  开启::cmd_block cn on"
+    "屏蔽回国 IP 流量  关闭::cmd_block cn off"
+    "屏蔽常见广告域名  开启::cmd_block ads on"
+    "屏蔽常见广告域名  关闭::cmd_block ads off"
+    "立即更新分流规则数据库::cmd_block update")
+
+  MENU_PERF=("[2] 链路测速与性能自检"
+    "🚀 节点本机真实握手自测 (selftest)::cmd_selftest"
+    "🩺 节点全栈健康诊断与异常自愈 (doctor)::doctor"
+    "🔌 UDP 端口段劫持与冲突检测 (portconflict)::cmd_portconflict"
+    "⚠️ sysctl 内核参数冲突与覆盖检测 (conflict)::cmd_conflict"
+    "📋 云端安全组放行端口排查 (ports)::cmd_ports")
+
+  MENU_NET=("[3] 系统网络与流控调优"
+    "系统层流控调优 (BBRv3 + FQ + 自适应缓冲区)::menu_onoff cmd_tune"
+    "TCP Brutal 极速加速模式与速率调节 (brutal)::menu_choose MENU_BRUTAL"
+    "极速优化客户端上/下行带宽 (speed)::menu_choose MENU_SPEED"
+    "TCP ECN 显式拥塞通知开关 (ecn)::menu_onoff cmd_ecn"
+    "客户端本地网络调优指南 (tuning client)::menu_choose MENU_TUNE_CLIENT")
+
+  MENU_BRUTAL=("TCP Brutal 极速拥塞控制"
+    "查看状态与实时连接::cmd_brutal show"
+    "开启 TCP Brutal 极速加速::cmd_brutal on"
+    "关闭 TCP Brutal 极速加速::cmd_brutal off"
+    "调整下发速率…::menu_ask 下发速率(Mbps，如300或auto) cmd_brutal speed")
+
+  MENU_SPEED=("极速优化客户端带宽"
+    "设置上/下行带宽…::menu_ask 上行与下行带宽(Mbps，如 100 1000) cmd_speed")
+
+  MENU_TUNE_CLIENT=("客户端本地网络调优指南"
+    "通用调优说明::cmd_tune client"
+    "Windows 客户端调优指南::cmd_tune win"
+    "macOS 客户端调优指南::cmd_tune mac"
+    "Linux 客户端调优指南::cmd_tune linux"
+    "sing-box 客户端核心加速配置::cmd_tune sb")
+
+  MENU_CERT=("[4] 证书管理与安全凭据"
+    "查看证书状态与到期时间 (status)::cert_mgmt status"
+    "一键手动强制续期证书 (renew)::cert_mgmt renew"
+    "同步证书并重载节点配置 (sync)::cert_mgmt sync"
+    "挂载 acme.sh 自动续期同步钩子 (hook)::cert_mgmt hook"
+    "轮换全部节点凭据与 UUID (rotate)::cmd_rotate")
+
+  MENU_SVC=("[5] 服务生命周期与系统运维"
+    "查看服务与流控运行状态 (status)::status_show"
+    "查看运行日志 (log)::menu_choose MENU_LOG"
+    "重启 sing-box 及关联服务 (restart)::sbrestart"
+    "更新 sing-box 内核版本 (update)::menu_choose MENU_UPDATE"
+    "外置 Hysteria2 检查与更新 (hy2)::menu_choose MENU_HY2")
+
+  MENU_LOG=("运行日志"
+    "查看最近 20 行日志::sblog 20"
+    "查看最近 50 行日志::sblog 50"
+    "查看最近 100 行日志::sblog 100"
+    "指定日志行数…::menu_ask 显示行数 sblog")
+
+  MENU_UPDATE=("更新 sing-box 内核"
+    "按当前通道更新最新版本::cmd_update"
+    "跟进并切换到正式稳定版 (stable)::cmd_update stable"
+    "跟进并切换到预览尝鲜版 (pre)::cmd_update pre")
+
+  MENU_HY2=("外置 Hysteria2 版本管理"
+    "检查外置 Hysteria2 新版本::cmd_hy2 check"
+    "手动更新外置 Hysteria2::cmd_hy2 update")
+
+  MENU_TUNNEL=("[6] 高级隧道与扩展网络"
+    "查看 Cloudflare Argo 隧道状态 (argo status)::cmd_argo status"
+    "开启/配置 Argo 隧道 (argo on)::cmd_argo on"
+    "关闭 Argo 隧道 (argo off)::cmd_argo off"
+    "更新 cloudflared 官方内核 (argo update)::cmd_argo update"
+    "WARP 出站解锁流媒体与 AI (warp)::menu_choose MENU_WARP")
+
+  MENU_WARP=("WARP 出站解锁"
+    "查看 WARP 出站状态::cmd_warp status"
+    "开启 WARP (仅解锁流媒体与 AI)::cmd_warp on ai"
+    "开启 WARP (全量流量出站)::cmd_warp on all"
+    "关闭 WARP 出站 (恢复原生直连)::cmd_warp off"
+    "刷新并轮换专属 WARP 账户凭据::cmd_warp rotate")
+}
+_menu_define
+
 cmd_menu() {
-  local choice a
+  local choice
   while true; do
     echo ""
-    echo -e "${CYAN}=== sbbox $SBBOX_VERSION 管理菜单 ===${NC}"
-    echo "  1) 查看服务与流控状态"
-    echo "  2) 查看节点信息与客户端配置"
-    echo "  3) 订阅链接与二维码 / 开关"
-    echo "  4) 重启 sing-box"
-    echo "  5) 查看日志"
-    echo "  6) 更新 sing-box 内核 (stable / pre)"
-    echo "  7) 系统流控调优 show / on / off / client"
-    echo "  8) TCP Brutal show / on / off / speed"
-    echo "  9) 极速优化 speed（设置客户端上/下行带宽）"
-    echo " 10) 证书管理 status / renew / sync / hook"
-    echo " 11) 端口跳跃 hop"
-    echo " 12) 更换端口 port"
-    echo " 13) WARP 出站解锁 on / off / status / rotate / update"
-    echo " 14) 外置 Hy2 检查 / 更新"
-    echo " 15) 自检修复 doctor"
-    echo " 16) 轮换全部凭据 rotate（需确认）"
-    echo " 17) 卸载（需确认）"
-    echo " 18) 出站分流开关 屏蔽回国 IP / 广告域名 block"
-    echo " 19) 云端需放行的端口清单 ports"
-    echo " 20) 节点本机自测 selftest（区分服务端问题与网络问题）"
-    echo " 21) 协议开关 proto（默认四大主力之外的备用协议如 Reality 在这里开关）"
-    echo " 22) Cloudflare Argo 隧道 status / update / on / off"
-    echo "  0) 退出"
-    read -rp "请选择: " choice || break
+    echo -e "${CYAN}================================================================${NC}"
+    echo -e "${CYAN}            sbbox 节点与协议全能管理终端 (${SBBOX_VERSION})            ${NC}"
+    echo -e "${CYAN}================================================================${NC}"
+    echo -e "  ${GREEN}[1]${NC} 节点与协议矩阵管理 (Nodes & Protocols)"
+    echo -e "  ${GREEN}[2]${NC} 链路测速与性能自检 (Benchmark & Diagnostics)"
+    echo -e "  ${GREEN}[3]${NC} 系统网络与流控调优 (Network & Tuning)"
+    echo -e "  ${GREEN}[4]${NC} 证书管理与安全凭据 (Certificates & Security)"
+    echo -e "  ${GREEN}[5]${NC} 服务生命周期与自愈 (Service & System)"
+    echo -e "  ${GREEN}[6]${NC} 高级隧道与扩展网络 (Argo & WARP)"
+    echo -e "  ${RED}[7]${NC} 卸载与清理 (Uninstall)"
+    echo -e "  ${YELLOW}[0]${NC} 退出终端 (Exit)"
+    echo -e "${CYAN}----------------------------------------------------------------${NC}"
+    echo -e "  快捷直达: 11(状态) 12(节点) 13(订阅) 14(重启) 15(日志) 16(自测)"
+    read -rp "请选择操作分类 [0-7] 或快捷数字: " choice || break
+
     case "$choice" in
-      1) ( status_show ) ;;
-      2) ( v4v6; load_state; gen_client ) ;;
-      3) read -rp "  直接回车查看 / on 开启 / off 关闭: " a; ( cmd_sub "${a:-show}" ) ;;
-      4) ( sbrestart ) ;;
-      5) read -rp "  显示最近多少行 (默认 20): " a; ( sblog "${a:-20}" ) ;;
-      6) read -rp "  直接回车按当前通道更新，或输入 stable / pre: " a; ( cmd_update $a ) ;;
-      7) read -rp "  show / on / off / client / win / mac / linux / sb: " a; ( cmd_tune "${a:-show}" ) ;;
-      8) read -rp "  show / on / off / speed [Mbps]: " a; ( cmd_brutal ${a:-show} ) ;;
-      9) read -rp "  输入 上行 下行 (Mbps，如 100 1000): " a; ( cmd_speed $a ) ;;
-      10) read -rp "  status / renew / sync / hook (默认 status): " a; ( cert_mgmt "${a:-status}" ) ;;
-      11) read -rp "  端口范围 (如 25000:38000) 或 off: " a; ( cmd_hop $a ) ;;
-      12) read -rp "  [tu] [hy2] [nv] [rea] [any] 端口，回车=自动分配: " a; ( cmd_port $a ) ;;
-      13) read -rp "  on / off / status / rotate / update (默认 status): " a; ( cmd_warp ${a:-status} ) ;;
-      14) read -rp "  check / update (默认 check): " a; ( cmd_hy2 "${a:-check}" ) ;;
-      15) ( doctor ) ;;
-      16) ( cmd_rotate ) ;;
-      17) ( cleandel ) ;;
-      18) read -rp "  show / cn on|off / ads on|off / update: " a; ( cmd_block ${a:-show} ) ;;
-      19) ( load_state; cloud_ports_hint ) ;;
-      20) ( cmd_selftest ) ;;
-      21) read -rp "  show / <hy2|naive|tuic|reality|anytls> on|off: " a; ( cmd_proto ${a:-show} ) ;;
-      22) read -rp "  status / update / on / off (默认 status): " a; ( cmd_argo ${a:-status} ) ;;
-      0|q|Q) break ;;
-      *) warn "无效选择" ;;
+      1) menu_loop MENU_NODE ;;
+      2) menu_loop MENU_PERF ;;
+      3) menu_loop MENU_NET ;;
+      4) menu_loop MENU_CERT ;;
+      5) menu_loop MENU_SVC ;;
+      6) menu_loop MENU_TUNNEL ;;
+      7)
+        cleandel
+        break
+        ;;
+      0|q|Q)
+        break
+        ;;
+      # 快捷直达
+      11) status_show ;;
+      12) cmd_node_list ;;
+      13) cmd_sub show ;;
+      14) sbrestart ;;
+      15) sblog 20 ;;
+      16) cmd_selftest ;;
+      *)
+        warn "无效选择"
+        ;;
     esac
-    [ "$choice" = "17" ] && [ ! -x "$SB_BIN" ] && break
-    read -rp "按回车返回菜单…" _ || break
   done
+}
+
+# ======================================================
+# 命令行参数帮助与顶级分发器 (CLI Usage & Dispatcher)
+# ======================================================
+
+usage() {
+  cat << USAGEEOF
+sbbox 节点与协议全能管理命令 (${SBBOX_VERSION})
+
+【基础运维与状态】
+  sbbox                 进入交互式全功能分层导航终端
+  sbbox help [<命令>]   显示全部命令；带命令名时只显示该命令的用法 (也可 sbbox <命令> --help)
+  sbbox status          查看服务运行状态、监听端口与流控指标
+  sbbox list            查看当前全部节点参数与客户端链接 (别名: sbbox info)
+  sbbox sub [on|off|show] 查看订阅链接与全端二维码 / 开启 / 关闭
+  sbbox res             重启 sing-box 及外置服务 (别名: sbbox restart)
+  sbbox log [行数]      查看实时运行日志 (默认 20 行)
+  sbbox up [stable|pre] 更新 sing-box 内核版本 (支持 stable 稳定版 / pre 测试版)
+  sbbox del             卸载全部组件并清理配置 (别名: sbbox uninstall)
+
+【链路自检与性能排查】
+  sbbox selftest        🚀 节点本机真实握手自测 (经 127.0.0.1 验证各协议连通性)
+  sbbox doctor          🩺 节点全栈健康诊断与异常自愈 (服务/端口/证书/DNS)
+  sbbox portconflict    🔌 UDP 端口段劫持与冲突检测
+  sbbox conflict        ⚠️ sysctl 内核参数冲突与覆盖检测
+  sbbox ports           云端防火墙/安全组需放行的端口清单
+
+【节点与协议矩阵管理】
+  sbbox proto [show|<hy2|naive|tuic|reality|anytls> on|off] 协议启用与开关
+  sbbox port [[tu] [hy2] [nv] [rea] [any]] 节点端口重新分配或自定义设置
+  sbbox hop [范围|off]  Hysteria2 端口跳跃范围设置 (如 25000:38000)
+  sbbox block [show|cn on|off|ads on|off|update] 出站屏蔽回国 IP / 广告域名
+
+【网络流控调优与加速】
+  sbbox tune [show|on|off|client|win|mac|linux|sb] 系统级流控调优与多端网络指南
+  sbbox brutal [show|on|off|speed|add|del] TCP Brutal 极速拥塞控制模式与下发限速
+  sbbox speed <上行> <下行> 极速优化客户端带宽设置 (Mbps，激活 Hy2 与 TCP Brutal)
+  sbbox ecn [show|on|off] TCP ECN 显式拥塞通知开关
+
+【证书管理与安全凭据】
+  sbbox cert [status|renew|sync|hook] SSL 证书全生命周期管理 (状态/续期/同步/钩子)
+  sbbox rotate          轮换节点 UUID 与安全凭据 (需确认)
+
+【高级隧道与扩展网络】
+  sbbox argo [status|update|on|off] Cloudflare Argo 穿透隧道管理
+  sbbox warp [status|on|off|rotate|update] WARP 出站解锁流媒体与 AI
+  sbbox hy2 [check|update] 外置 Hysteria2 版本检查与手动安全更新
+  sbbox version         查看当前 sbbox 管理脚本与内核版本
+USAGEEOF
+}
+
+# usage_for <命令>：只显示 usage() 里属于该命令的行（含"别名: sbbox <命令>"）；没有则返回 1。
+usage_for() {
+  local lines
+  [[ "$1" =~ ^[a-z0-9_-]+$ ]] || return 1
+  lines=$(usage | grep -E "^  sbbox $1( |\$)|别名: sbbox $1\b") || return 1
+  echo "$lines"
 }
 
 # ======================================================
@@ -5989,36 +6260,74 @@ main() {
     esac
   done
   local cmd="${1:-}"
+
+  # sbbox <命令> -h|--help 只查看用法，不执行命令
+  case "${2:-}" in
+    -h|--help) usage_for "$cmd" && exit 0 ;;
+  esac
+
   case "$cmd" in
-    menu)   cmd_menu; exit ;;
-    list)   v4v6; load_state; gen_client; exit ;;
-    status) status_show; exit ;;
-    res)    sbrestart; exit ;;
-    up)
+    menu)       cmd_menu; exit ;;
+    list|info)  cmd_node_list; exit ;;
+    status)     status_show; exit ;;
+    res|restart) sbrestart; exit ;;
+    up|update)
       shift; cmd_update "$@"
-      # v2.7.35：顺带检查外置 Hysteria2 与 tcp-brutal 新版本——只写提醒（登录时与
-      # sbbox status 显示），不自动安装；每周 cron 的输出同时写入 syslog。
+      # v2.7.35：顺带检查外置 Hysteria2 与 tcp-brutal 新版本
       { check_hy2_update; check_tcp_brutal_update; } 2>&1 | tee >(logger -t sbbox-autoupdate)
       exit ;;
-    hy2)    shift; cmd_hy2 "$@"; exit ;;
-    log)    sblog "$2"; exit ;;
+    hy2)        shift; cmd_hy2 "$@"; exit ;;
+    log)        sblog "${2:-20}"; exit ;;
     tune|tuning) shift; cmd_tune "$@"; exit ;;   # 安装期已自动 on，off 用于回滚
-    cert)   shift; cert_mgmt "$@"; exit ;;
-    sub)    shift; cmd_sub "$@"; exit ;;
-    hop)    shift; cmd_hop "$@"; exit ;;
-    speed|bw) shift; cmd_speed "$@"; exit ;;
-    brutal) shift; cmd_brutal "$@"; exit ;;
-    port)   shift; cmd_port "$@"; exit ;;
-    warp)   shift; cmd_warp "$@"; exit ;;
-    argo)   shift; cmd_argo "$@"; exit ;;
-    block)  shift; cmd_block "$@"; exit ;;
-    doctor) doctor; exit ;;
-    ports)  load_state; cloud_ports_hint; exit ;;
-    selftest) cmd_selftest; exit ;;
-    proto)  shift; cmd_proto "$@"; exit ;;
-    rotate) cmd_rotate; exit ;;
-    del)    cleandel; exit ;;
-    help|-h|--help) showmode; exit ;;
+    ecn)        shift; cmd_ecn "$@"; exit ;;
+    conflict)   cmd_conflict; exit ;;
+    portconflict) cmd_portconflict; exit ;;
+    cert)       shift; cert_mgmt "$@"; exit ;;
+    sub)        shift; cmd_sub "$@"; exit ;;
+    hop)        shift; cmd_hop "$@"; exit ;;
+    speed|bw)   shift; cmd_speed "$@"; exit ;;
+    brutal)     shift; cmd_brutal "$@"; exit ;;
+    port)       shift; cmd_port "$@"; exit ;;
+    warp)       shift; cmd_warp "$@"; exit ;;
+    argo)       shift; cmd_argo "$@"; exit ;;
+    block)      shift; cmd_block "$@"; exit ;;
+    doctor)     doctor; exit ;;
+    ports)      cmd_ports; exit ;;
+    selftest)   cmd_selftest; exit ;;
+    proto)      shift; cmd_proto "$@"; exit ;;
+    rotate)     cmd_rotate; exit ;;
+    del|uninstall) cleandel; exit ;;
+    version)
+      [[ -x "$SB_BIN" ]] && "$SB_BIN" version | head -1
+      echo "sbbox ${SBBOX_VERSION:-unknown} (manage cli)"
+      exit ;;
+    help)
+      if [[ -z "${2:-}" ]]; then
+        usage
+      else
+        usage_for "$2" || { echo "没有 '$2' 的说明，执行 sbbox help 查看全部命令" >&2; exit 1; }
+      fi
+      exit ;;
+    -h|--help)  usage; exit ;;
+    "")
+      if [[ -x "$SB_BIN" ]]; then
+        # 已安装但未指定协议：在终端里直接进入管理菜单；非交互仍显示帮助与状态
+        if [[ -t 0 && -t 1 ]]; then
+          cmd_menu
+          exit
+        fi
+        usage
+        status_show
+        exit
+      fi
+      ;;
+    *)
+      if [[ -x "$SB_BIN" ]]; then
+        echo "未知命令: $cmd（执行 sbbox help <命令> 查看用法）" >&2
+        usage
+        exit 1
+      fi
+      ;;
   esac
 
 
@@ -6452,6 +6761,152 @@ cmd_tune() {
     client|win|windows|mac|macos|linux|sb|singbox) tune_client "$action" ;;
     *) echo "用法: sbbox tune [show|on|off|client|win|mac|linux|sb]" ;;
   esac
+}
+
+# TCP ECN (Explicit Congestion Notification) 拥塞通知控制
+cmd_ecn() {
+  local action="${1:-show}"
+  case "$action" in
+    show|status)
+      echo ""
+      echo -e "${CYAN}=== TCP ECN (Explicit Congestion Notification) 状态 ===${NC}"
+      local cur_ecn cur_fallback
+      cur_ecn=$(sysctl -n net.ipv4.tcp_ecn 2>/dev/null || echo "n/a")
+      cur_fallback=$(sysctl -n net.ipv4.tcp_ecn_fallback 2>/dev/null || echo "n/a")
+      if [ "$cur_ecn" = "1" ]; then
+        echo -e "  当前状态:       ${GREEN}已开启 (1 - 主动双向协商)${NC}"
+      elif [ "$cur_ecn" = "2" ]; then
+        echo -e "  当前状态:       ${YELLOW}被动协商 (2 - 仅响应对端 ECN 请求)${NC}"
+      else
+        echo -e "  当前状态:       ${RED}已关闭 (0)${NC}"
+      fi
+      echo -e "  自动回退黑洞:   ${cur_fallback} (1=开启，遇到不支持 ECN 的坏中间盒自动回退)"
+      local ce_stat
+      ce_stat=$(nstat -az 2>/dev/null | grep -iE 'DeliveredCE|InCEPkts' | awk '{printf "%s: %s  ", $1, $2}')
+      echo -e "  路径 CE 标记:   ${ce_stat:-无记录或0}"
+      echo ""
+      echo -e "说明："
+      echo -e "  • ECN 允许网络路由器在缓冲区打满前向 TCP 端点标记拥塞（CE 标记），避免直接丢包。"
+      echo -e "  • 配合当前主机的 BBRv3 内核，可实现极低抖动拥塞控制响应。"
+      echo -e "  • 快捷命令:"
+      echo -e "      sbbox ecn on       # 开启主动双向 ECN 协商 (tcp_ecn=1)"
+      echo -e "      sbbox ecn off      # 关闭 ECN 协商 (tcp_ecn=0)"
+      echo ""
+      ;;
+    on)
+      info "正在开启 TCP ECN..."
+      sysctl -w net.ipv4.tcp_ecn=1 >/dev/null 2>&1 || true
+      sysctl -w net.ipv4.tcp_ecn_fallback=1 >/dev/null 2>&1 || true
+      if [ -f "$SYSCTL_CONF" ]; then
+        sed -i -E 's/^#?net\.ipv4\.tcp_ecn[[:space:]]*=.*/net.ipv4.tcp_ecn = 1/' "$SYSCTL_CONF" 2>/dev/null || true
+        sed -i -E 's/^#?net\.ipv4\.tcp_ecn_fallback[[:space:]]*=.*/net.ipv4.tcp_ecn_fallback = 1/' "$SYSCTL_CONF" 2>/dev/null || true
+      fi
+      if [ -f "/etc/sysctl.d/99-xray-xhttp.conf" ]; then
+        sed -i -E 's/^#?net\.ipv4\.tcp_ecn[[:space:]]*=.*/net.ipv4.tcp_ecn = 1/' "/etc/sysctl.d/99-xray-xhttp.conf" 2>/dev/null || true
+        sed -i -E 's/^#?net\.ipv4\.tcp_ecn_fallback[[:space:]]*=.*/net.ipv4.tcp_ecn_fallback = 1/' "/etc/sysctl.d/99-xray-xhttp.conf" 2>/dev/null || true
+      fi
+      info "TCP ECN 已成功开启 (net.ipv4.tcp_ecn=1, tcp_ecn_fallback=1)！"
+      ;;
+    off)
+      info "正在关闭 TCP ECN..."
+      sysctl -w net.ipv4.tcp_ecn=0 >/dev/null 2>&1 || true
+      if [ -f "$SYSCTL_CONF" ]; then
+        sed -i -E 's/^#?net\.ipv4\.tcp_ecn[[:space:]]*=.*/net.ipv4.tcp_ecn = 0/' "$SYSCTL_CONF" 2>/dev/null || true
+      fi
+      if [ -f "/etc/sysctl.d/99-xray-xhttp.conf" ]; then
+        sed -i -E 's/^#?net\.ipv4\.tcp_ecn[[:space:]]*=.*/net.ipv4.tcp_ecn = 0/' "/etc/sysctl.d/99-xray-xhttp.conf" 2>/dev/null || true
+      fi
+      info "TCP ECN 已关闭 (net.ipv4.tcp_ecn=0)！"
+      ;;
+    *)
+      echo "用法: sbbox ecn [show|on|off]"
+      ;;
+  esac
+}
+
+# sysctl 参数冲突与优先级覆盖检测
+cmd_conflict() {
+  local ours="99-sbbox.conf" d=/etc/sysctl.d
+  echo -e "${CYAN}[+] sysctl 配置冲突检测${NC}"
+  [ -f "$SYSCTL_CONF" ] || { info "本项目未写入 sysctl（系统层调优关闭），无冲突可言"; echo ""; return 0; }
+
+  local ourkeys conflict=0
+  ourkeys=$(sed 's/#.*//; s/=.*//; s/[[:space:]]//g' "$SYSCTL_CONF" | grep -E '^[a-z]' | sort -u)
+
+  local f base dup
+  for f in "$d"/*.conf; do
+    [ -f "$f" ] || continue
+    base=$(basename "$f")
+    [ "$base" = "$ours" ] && continue
+    dup=$(sed 's/#.*//; s/=.*//; s/[[:space:]]//g' "$f" | grep -E '^[a-z]' | sort -u |
+          comm -12 - <(echo "$ourkeys") 2>/dev/null)
+    [ -z "$dup" ] && continue
+    conflict=1
+    if [ "$base" \> "$ours" ]; then
+      echo -e "  ${RED}[!!]${NC} $base 排在本项目之后，会**覆盖**以下参数："
+    else
+      echo -e "  ${YELLOW}[--]${NC} $base 与本项目重叠，但排序在前，被本项目覆盖（当前无害）："
+    fi
+    echo "$dup" | sed 's/^/         /'
+  done
+  [ "$conflict" -eq 0 ] && echo -e "  ${GREEN}[OK]${NC}   未发现与其它 sysctl 文件的参数重叠"
+
+  local junk
+  junk=$(ls "$d" 2>/dev/null | grep -vE '\.conf$|^README' || true)
+  if [ -n "$junk" ]; then
+    echo ""
+    echo -e "  ${YELLOW}[--]${NC} 以下文件不以 .conf 结尾，systemd-sysctl 不会加载（仅占位，可自行清理）："
+    echo "$junk" | sed 's/^/         /'
+    echo "         清理: mkdir -p /root/sysctl-backup && mv /etc/sysctl.d/*.disabled.* /etc/sysctl.d/*.bak /root/sysctl-backup/"
+  fi
+
+  echo ""
+  echo -e "${CYAN}实际生效值（以内核为准，与文件内容无关）${NC}"
+  local k
+  for k in net.core.somaxconn net.core.netdev_max_backlog net.ipv4.tcp_max_syn_backlog \
+           net.core.rmem_max net.ipv4.tcp_congestion_control net.core.default_qdisc; do
+    printf '    %-36s %s\n' "$k" "$(sysctl -n "$k" 2>/dev/null || echo n/a)"
+  done
+  echo ""
+}
+
+# UDP 端口段劫持与冲突检测
+cmd_portconflict() {
+  echo -e "${CYAN}[+] UDP 端口段劫持与冲突检测${NC}"
+  command -v iptables >/dev/null 2>&1 || { info "未安装 iptables，跳过"; echo ""; return 0; }
+
+  local ranges listen found=0
+  ranges=$(iptables -t nat -S PREROUTING 2>/dev/null | grep -E '\-\-dport [0-9]+:[0-9]+')
+  [ -z "$ranges" ] && { info "未发现端口段规则，无劫持风险"; echo ""; return 0; }
+
+  local svc_ports
+  svc_ports=$(iptables -S INPUT 2>/dev/null \
+              | grep -E '\-p udp .*--dport [0-9]+ -j ACCEPT' \
+              | grep -oE '\-\-dport [0-9]+' | awk '{print $2}' | sort -un)
+  listen=$(ss -uln 2>/dev/null | tail -n +2 | awk '{print $4}' \
+           | sed 's/.*://' | grep -E '^[0-9]+$' | sort -un)
+  [ -n "$svc_ports" ] && listen=$(echo "$listen" | grep -Fx -f <(echo "$svc_ports") 2>/dev/null)
+
+  local line rrange rstart rend target p
+  while read -r line; do
+    [ -z "$line" ] && continue
+    rrange=$(echo "$line" | grep -oE '\-\-dport [0-9]+:[0-9]+' | awk '{print $2}')
+    [ -z "$rrange" ] && continue
+    rstart=${rrange%:*}
+    rend=${rrange#*:}
+    target=$(echo "$line" | grep -oE '\-j [A-Z]+' | awk '{print $2}')
+
+    for p in $listen; do
+      if [ "$p" -ge "$rstart" ] && [ "$p" -le "$rend" ]; then
+        echo -e "  ${RED}[!!]${NC} 发现端口劫持风险: 本机 UDP 服务端口 $p 落在 PREROUTING 规则范围 ${rstart}:${rend} 内 (动作: ${target:-REDIRECT})"
+        echo -e "       规则原文: $line"
+        found=1
+      fi
+    done
+  done <<< "$ranges"
+
+  [ "$found" -eq 0 ] && echo -e "  ${GREEN}[OK]${NC} 未发现 UDP 端口冲突劫持情况"
+  echo ""
 }
 
 # 证书管理命令
