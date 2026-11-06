@@ -14,3 +14,13 @@
   1. **智能参数分流**：遍历参数时，若参数包含 `*=*` 或为 `install/reinstall`，必须置位 `has_install_args=1`；仅当参数纯为已知子命令名时才提取为 `$cmd`；
   2. **安装模式豁免**：存在安装类参数（`has_install_args=1`）时，坚决跳过管理分发器的通配报错，直接安全进入核心安装流程；
   3. **放开默认协议集适配范围**：移除协议判定中多余的 `[ ! -x "$SB_BIN" ]` 条件，确保存量机器重跑安装命令时也能正确注入默认协议集。
+
+## 3. TCP 与 UDP 传输参数对齐与协议分立规范 (2026-11-06)
+- **背景与根因**：
+  1. TUIC 原客户端配置及链接中残留 `cubic` 拥塞控制，在跨网存在偶发抖动与轻微丢包时触发窗口剧烈回退；参考 argosbx 最新实践，TUIC 全端统一为 `bbr` 与原生 UDP 数据报转发（`udp_relay_mode=native`，`reduce-rtt: true`），消除带宽吞吐塌缩与首包延迟。
+  2. 原 Naive-H2 客户端配置中误配 `"quic": true`，导致 Naive-H2 与 Naive-H3 均走向 QUIC/UDP，在 UDP 遭运营商劣化或封锁的网络环境下两节点全灭。
+  3. sing-box 原生 inbound/outbound 对字段有强类型校验（如 `udp_relay_mode` 仅属 outbound、`anytls` 不支持 `tcp_fast_open`、`hysteria2` 出站不支持 `fast_open` 字段），不可盲目堆叠字段。
+- **治理与防范规则**：
+  1. **双 Naive 严格分立**：Naive-H3 锁定纯 QUIC+BBR 数据报；Naive-H2 锁定纯 TCP（`quic: false` + UoT v2），形成互补备份。
+  2. **Mihomo 针对性加速**：在 Mihomo `clmi.yaml` 中，Hysteria2 节点启用 `fast-open: true` 与 `128M/64M` 接收窗口；TUIC 节点启用 `reduce-rtt: true` 与 `congestion-controller: bbr`。
+  3. **严格语法校验**：配置变更后必须执行 `sing-box check` 与 Python YAML 解析校验，再通过 `sbbox selftest` 实测验证握手状态。

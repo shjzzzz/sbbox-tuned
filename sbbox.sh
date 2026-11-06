@@ -2505,8 +2505,8 @@ gen_client() {
     case "$tuech" in
       1|on|yes|true) [ -n "$tuech_config" ] && tuic_ech="&ech=$(printf %s "$tuech_config" | base64 | tr -d '\n')" ;;
     esac
-    # TUIC v5 显式声明 version=5（Shadowrocket 强依赖，避免误判为 v4 握手失败）并保留 security=tls（v2rayN 强校验）
-    tuic_link="tuic://$uuid_tu:$(rawurlencode "$pw_tu")@$add:$port_tu?version=5&security=tls&congestion_control=cubic&udp_relay_mode=native&alpn=h3&sni=$sni&insecure=$jhins&allowInsecure=$jhins&allow_insecure=$jhins$tuic_pcs$tuic_pin$tuic_ech#TUIC"
+    # TUIC v5 显式声明 version=5（Shadowrocket 强依赖，避免误判为 v4 握手失败）并保留 security=tls（v2rayN 强校验），对齐 argosbx 升级为 bbr
+    tuic_link="tuic://$uuid_tu:$(rawurlencode "$pw_tu")@$add:$port_tu?version=5&security=tls&congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=$sni&insecure=$jhins&allowInsecure=$jhins&allow_insecure=$jhins$tuic_pcs$tuic_pin$tuic_ech#TUIC"
     echo "$tuic_link" >> "$SB_LINK"
     echo "💣【 4 Tuic (QUIC 备选) 】节点信息如下："
     echo "$tuic_link"; echo
@@ -3345,7 +3345,7 @@ gen_client_sbox() {
         "insecure_concurrency": 1,
         "stream_receive_window": 67108864,
         "quic_session_receive_window": 134217728,
-        "udp_over_tcp": { "enabled": true, "version": 2 },
+        "udp_over_tcp": false,
         "quic": true,
         "quic_congestion_control": "bbr",
         "bind_address_no_port": true,
@@ -3364,8 +3364,7 @@ gen_client_sbox() {
         "stream_receive_window": 67108864,
         "quic_session_receive_window": 134217728,
         "udp_over_tcp": { "enabled": true, "version": 2 },
-        "quic": true,
-        "quic_congestion_control": "bbr",
+        "quic": false,
         "bind_address_no_port": true,
         "udp_fragment": true,
         "tls": { "enabled": true, "insecure": false, "server_name": "'"$sni"'" }
@@ -3374,11 +3373,7 @@ gen_client_sbox() {
   fi
 
   # 5. TUIC (Hysteria2 的 QUIC 备选)
-  # v2.7.36：TUIC 客户端拥塞控制由 bbr 改回 cubic（TUIC 默认）。实测（160ms/1% 丢包、300↓/50↑）
-  # 客户端 bbr 在同一条连接上大量上传后，后续下载塌到 ~20 Mbps（上传前 ~95），直到连接重建——
-  # sing-quic / Mihomo 的 BBR 把纯 ACK 包也计入 pacing，发送方状态拖慢 ACK，拖垮对端的下行；
-  # TUIC 有 10s 心跳，连接长期存活，故障会一直持续。sing-box 客户端 cubic：下 121 / 上 39；
-  # Mihomo 客户端 cubic：下 113~158 / 上 8~15（bbr 为 19 / 35）。服务端 tuic-in 仍用 bbr（改 cubic 下行只剩 6）。
+  # 对齐 argosbx 最新实践：全链路启用 bbr 与 原生 UDP 数据报
   if [ -n "$tup" ]; then
     ob+=('{
         "type": "tuic",
@@ -3387,7 +3382,8 @@ gen_client_sbox() {
         "server_port": '"$port_tu"',
         "uuid": "'"$uuid_tu"'",
         "password": "'"$pw_tu"'",
-        "congestion_control": "cubic",
+        "congestion_control": "bbr",
+        "udp_over_stream": false,
         '"$tuic_udp"'
         "zero_rtt_handshake": false,
         "heartbeat": "10s",
@@ -3631,7 +3627,10 @@ gen_client_clash() {
     password: $pw_hy
     alpn: [h3]$hyobfs_yaml$hy_ports_yaml
     sni: $sni
-    skip-cert-verify: $msins"
+    skip-cert-verify: $msins
+    fast-open: true
+    recv-window-conn: 134217728
+    recv-window: 67108864"
     groups="$groups
       - Hysteria2-TLS-BBR-Salamander"
   fi
@@ -3676,11 +3675,11 @@ gen_client_clash() {
     uuid: $uuid_tu
     password: $pw_tu
     alpn: [h3]
-    reduce-rtt: false
+    reduce-rtt: true
     heartbeat-interval: 10000
     request-timeout: 8000
     udp-relay-mode: native
-    congestion-controller: cubic
+    congestion-controller: bbr
     sni: $sni
     skip-cert-verify: $msins"
 
