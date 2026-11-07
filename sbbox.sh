@@ -2165,7 +2165,7 @@ EOF
                 "enabled": true,
                 "server_name": "$ym",
                 "min_version": "1.2",
-                "alpn": [ "h2", "http/1.1" ],
+                "alpn": [ "h2" ],
                 "certificate_path": "$cert_path",
                 "key_path": "$key_path",
                 "handshake_timeout": "15s"
@@ -3306,7 +3306,7 @@ gen_client_sbox() {
         "tls": {
             "enabled": true,
             "server_name": "'"$sni"'",
-            "alpn": ["h2", "http/1.1"],
+            "alpn": ["h2"],
             "insecure": '"$msins"',
             "utls": {
                 "enabled": true,
