@@ -46,7 +46,7 @@ SYSCTL_CONF="/etc/sysctl.d/99-sbbox.conf"
 LIMITS_CONF="/etc/security/limits.d/99-sbbox.conf"
 SB_SERVICE="sbbox"
 SB_SEC_DIR="$SB_HOME/sec"
-SBBOX_VERSION="v2.7.78"
+SBBOX_VERSION="v2.7.79"
 SB_URL="https://raw.githubusercontent.com/shjzzzz/sbbox-tuned/main/sbbox.sh"
 # root 装到 /usr/local/bin（始终在 PATH 中）；非 root 退回 ~/bin
 if [ "$(id -u 2>/dev/null)" = "0" ] && [ -d /usr/local/bin ]; then
@@ -1418,12 +1418,16 @@ apply_tuning() {
 
   # ---------- 连接建立与保持 ----------
   try_sysctl net.ipv4.tcp_fastopen 3
-  try_sysctl net.ipv4.tcp_mtu_probing 0
+  # 开启 RFC 4821 PLPMTUD（包化层路径 MTU 探测）：当链路遭遇中间网元丢弃 ICMP 报文产生 PMTU 黑洞时，
+  # 内核自动向下探测协商合适 MSS，杜绝大包、TLS 证书握手与流媒体切片静默丢弃卡死
+  try_sysctl net.ipv4.tcp_mtu_probing 1
   try_sysctl net.ipv4.tcp_slow_start_after_idle 0
   # 不缓存上条连接的 cwnd/ssthresh：跨境链路抖动大，缓存下来的坏指标会让
   # 后续新连接一开始就被压在低速率上
   try_sysctl net.ipv4.tcp_no_metrics_save 1
-  try_sysctl net.ipv4.tcp_notsent_lowat 524288
+  # 套接字未发送数据上限：由 512KB 优化收敛至 128KB (131072)。在千兆 BBR/BBRv3 速率下，既保证充足的
+  # 管道吞吐，又能精准压降发送缓冲区排队延迟与 Bufferbloat，显著改善 YouTube 等流媒体首屏加载与播放抖动
+  try_sysctl net.ipv4.tcp_notsent_lowat 131072
   try_sysctl net.ipv4.tcp_frto 2
   try_sysctl net.ipv4.tcp_early_retrans 3
   try_sysctl net.ipv4.tcp_syncookies 1

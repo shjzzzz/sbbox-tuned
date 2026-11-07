@@ -24,3 +24,12 @@
   1. **双 Naive 严格分立**：Naive-H3 锁定纯 QUIC+BBR 数据报；Naive-H2 锁定纯 TCP（`quic: false` + UoT v2），形成互补备份。
   2. **Mihomo 针对性加速**：在 Mihomo `clmi.yaml` 中，Hysteria2 节点启用 `fast-open: true` 与 `128M/64M` 接收窗口；TUIC 节点启用 `reduce-rtt: true` 与 `congestion-controller: bbr`。
   3. **严格语法校验**：配置变更后必须执行 `sing-box check` 与 Python YAML 解析校验，再通过 `sbbox selftest` 实测验证握手状态。
+
+## 4. 跨境网络 PMTU 黑洞与流媒体 Bufferbloat 综合治理 (2026-11-07)
+- **背景与根因**：
+  1. 跨境高延迟链路（140~180ms RTT）下，若中间网元对 ICMP Fragmentation Needed 报文静默丢弃，遇非对称 MTU（如 PPPoE 1492 / 移动蜂窝 1420）易发生 PMTU 黑洞死锁，导致 TLS 证书握手与大包静默超时；
+  2. 套接字未发送缓冲区 `tcp_notsent_lowat` 原设为 512KB，在高突发视频流下载时造成发送队列积压与 Bufferbloat，放大 RTT 抖动并影响 BBRv3 Pacing 精度。
+- **治理与防范规则**：
+  1. **PLPMTUD 主动探测**：全量开启 `net.ipv4.tcp_mtu_probing = 1`（RFC 4821），遇到黑洞连续重传时内核主动向下试探 MSS，防止大包死锁；
+  2. **发送缓冲收敛**：`tcp_notsent_lowat` 收敛至 **128KB (131072)**，既满足千兆 BDP 管道吞吐，又杜绝发送端缓冲膨胀，平滑流媒体 Pacing；
+  3. **AnyTLS ALPN 收敛**：AnyTLS 移除 `http/1.1` 仅保留 `h2`，杜绝 HTTP/1.1 明文字面量特征暴露。

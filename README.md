@@ -7,7 +7,15 @@
 
 ---
 
-## 🌟 最新更新亮点 (v2.7.78 / 2026-10-31)
+## 🌟 最新更新亮点 (v2.7.79 / 2026-11-07)
+
+- **跨境 PMTU 黑洞与流媒体 Bufferbloat 综合治理**：全链路开启 RFC 4821 PLPMTUD (`net.ipv4.tcp_mtu_probing = 1`)，遇非对称 MTU 或 ICMP 丢弃主动协商 MSS，根除大包死锁；将套接字未发送缓冲区 `net.ipv4.tcp_notsent_lowat` 收敛至 **128KB**，平滑 BBRv3 Pacing 并抑制视频缓冲抖动。
+- **AnyTLS 协议指纹加固**：服务端与客户端 TLS 协商移除 `http/1.1` 仅保留 `h2`，杜绝 HTTP/1.1 明文字面量特征暴露。
+- **与 xh 调优参数硬对齐**：全套件底层网络参数、BBR 调优与 MSS 保护策略保持完全一致。
+
+---
+
+## 🌟 历史更新亮点 (v2.7.78 / 2026-10-31)
 
 - **模仿 xh 统一重构管理终端与数据驱动菜单**：采用数据驱动分层架构（`menu_loop` / `menu_choose` / `menu_onoff` / `menu_ask`），主菜单划分为 7 大功能模块（节点与协议、链路测速自检、系统网络流控、证书安全、生命周期自愈、高级隧道、卸载）与 6 个快捷直达数字；杜绝手敲参数，彻底消除 EOF / 管道关闭时的死循环刷屏。
 - **自适应 VPS 机器配置与流控优化全量对齐**：按 CPU 核心数、物理内存、体系结构、内核页大小（适配 ARM 64KB 页）与出口网卡带宽智能分档（`large` / `medium` / `entry` / `small`），动态自适应 `tcp_mem` / `udp_mem`、BDP 缓冲区、`netdev_budget` 与队列长度；DefaultLimitNOFILE 与 `fs.nr_open` 硬对齐防 205/LIMITS；新增 `sbbox conflict`（内核参数冲突检测）、`sbbox portconflict`（UDP 端口段劫持排查）与 `sbbox ecn`（TCP ECN 拥塞通知）。
