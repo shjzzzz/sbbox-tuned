@@ -31,10 +31,12 @@ jobs:
         include:
           - name: 推荐四大主力（含 AnyTLS）
             env: hyp=1 anyp=1 nvp=1 tup=1 alns=1 ym=ci.example.com
-          - name: 全五协议（含 Reality）
-            env: hyp=1 anyp=1 nvp=1 tup=1 reap=1 alns=1 ym=ci.example.com
+          - name: 全六协议（含 Reality 与 Snell）
+            env: hyp=1 anyp=1 nvp=1 tup=1 snellp=1 reap=1 alns=1 ym=ci.example.com
           - name: 仅 AnyTLS
             env: anyp=1 alns=1 ym=ci.example.com
+          - name: 仅 Snell v6
+            env: snellp=1
           - name: 仅 Reality
             env: reap=1
           - name: 无域名极速组合
@@ -112,6 +114,7 @@ jobs:
               hyp=1) jq -e '.inbounds[]|select(.type=="hysteria2")' "$CONF" >/dev/null ;;
               nvp=1) jq -e '.inbounds[]|select(.type=="naive")'     "$CONF" >/dev/null ;;
               anyp=1) jq -e '.inbounds[]|select(.type=="anytls")'   "$CONF" >/dev/null ;;
+              snellp=1) jq -e '.inbounds[]|select(.type=="snell")'  "$CONF" >/dev/null ;;
               reap=1) jq -e '.inbounds[]|select(.type=="vless")'    "$CONF" >/dev/null ;;
             esac
           done
@@ -130,6 +133,20 @@ jobs:
           grep -q '^vless://' "$HOME/sbbox/nodes.txt" \
             || { echo "nodes.txt 应包含 vless:// 节点链接"; exit 1; }
           echo "OK: VLESS-Reality 配置与节点链接符合预期"
+
+      - name: 断言 Snell v6 配置正确
+        run: |
+          set -euo pipefail
+          if ! echo '${{ matrix.env }}' | grep -q 'snellp=1'; then exit 0; fi
+          CLIENT="$HOME/sbbox/sbox_client.json"
+          CONF="$HOME/sbbox/sb.json"
+          jq -e '.inbounds[]|select(.type=="snell")|.version==6 and .mode=="default"' "$CONF" >/dev/null \
+            || { echo "服务端 snell 入站应为 version 6 且 mode 为 default"; exit 1; }
+          jq -e '.outbounds[]|select(.type=="snell")|.version==6 and .mode=="default"' "$CLIENT" >/dev/null \
+            || { echo "客户端 snell 出站应为 version 6 且 mode 为 default"; exit 1; }
+          grep -q '^snell://' "$HOME/sbbox/nodes.txt" \
+            || { echo "nodes.txt 应包含 snell:// 节点链接"; exit 1; }
+          echo "OK: Snell v6 配置与节点链接符合预期"
 
       - name: 断言 AnyTLS 配置正确
         run: |

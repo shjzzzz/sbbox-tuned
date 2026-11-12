@@ -7,7 +7,15 @@
 
 ---
 
-## 🌟 最新更新亮点 (v2.7.79 / 2026-11-07)
+## 🌟 最新更新亮点 (v2.8.00 / 2026-11-12)
+
+- **Snell v6 原生协议矩阵集成**：基于 sing-box 1.14 原生支持 Surge Snell v6 协议入站，采用 PSK-derived 强加密与流量整形（`mode: default`），免申请域名与 TLS 证书，开箱即用。
+- **全客户端配置联动生成**：同步输出 `snell://` 协议链接、Surge 专属配置块、sing-box 客户端 outbound 与 Mihomo (Clash Meta) 代理节点，纳入全客户端动态订阅。
+- **自动化管理与端到端自检**：集成 `sbbox proto snell on|off`、`sbbox port` 端口重分配、`sbbox doctor` 状态监控与 `sbbox selftest` 本机真实回环握手断言。
+
+---
+
+## 🌟 历史更新亮点 (v2.7.79 / 2026-11-07)
 
 - **跨境 PMTU 黑洞与流媒体 Bufferbloat 综合治理**：全链路开启 RFC 4821 PLPMTUD (`net.ipv4.tcp_mtu_probing = 1`)，遇非对称 MTU 或 ICMP 丢弃主动协商 MSS，根除大包死锁；将套接字未发送缓冲区 `net.ipv4.tcp_notsent_lowat` 收敛至 **128KB**，平滑 BBRv3 Pacing 并抑制视频缓冲抖动。
 - **AnyTLS 协议指纹加固**：服务端与客户端 TLS 协商移除 `http/1.1` 仅保留 `h2`，杜绝 HTTP/1.1 明文字面量特征暴露。
@@ -66,6 +74,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/sbbox-tuned/main/sbbox
 | 🥈 | **NaiveProxy** | H3 (QUIC) & H2 (TCP) | Chromium 原生网络栈内核反探测伪装 | 高危封锁期与敏感业务防指纹识别 |
 | 🥉 | **TUIC v5** | UDP / QUIC (H3) | 标准 QUIC 0-RTT + Congestion Control | 跨洋低延迟交互、UDP 流量平滑转发 |
 | 💣 | **AnyTLS** | TCP + TLS 1.3 | 消除 TLS-in-TLS 特征 + 自适应 8 级填充 | 纯 TCP 环境全平台高隐匿穿透 |
+| 🚀 | **Snell v6** | TCP | PSK-derived 强加密 + 流量整形 (免证书) | Surge / Mihomo / Shadowrocket 原生支持，极轻量低延迟 |
 | ⚡ | **Nowhere** | TLS/QUIC 混合中继 | 上下行独立传输分流（上行 TCP / 下行 UDP） | 规避运营商 UDP 恶性丢包并保持下行极速 |
 | 🛡️ | **VLESS-Reality** | TCP (xtls-rprx-vision) | 借用官方 SNI 借壳偷渡（免真实证书） | 全平台客户端即开即用备用通道 |
 

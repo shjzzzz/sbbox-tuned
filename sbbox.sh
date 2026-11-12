@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ======================================================
-# sing-box-naiveproxy (sbbox.sh) — Sing-box 四协议安全加固代理脚本
+# sing-box-naiveproxy (sbbox.sh) — Sing-box 多协议安全加固代理脚本
 #
 # 基于 yonggekkk/argosbx 架构，剥离为 sing-box 单内核，
-# 支持 VLESS-Reality / Tuic / Hysteria2 / Naiveproxy(H2+H3) 四协议。
+# 支持 VLESS-Reality / Tuic / Hysteria2 / Naiveproxy(H2+H3) / AnyTLS / Snell v6 协议矩阵。
 # 默认使用官方最新稳定正式版内核（sbrel=stable，v2.7.34 起），需要跟踪 alpha/beta/rc 新特性时可一键切换测试版通道（sbbox up pre）。
 #
 # 集成内核级流控调优 (xh tuning on) + acme.sh 证书申请。
@@ -46,7 +46,7 @@ SYSCTL_CONF="/etc/sysctl.d/99-sbbox.conf"
 LIMITS_CONF="/etc/security/limits.d/99-sbbox.conf"
 SB_SERVICE="sbbox"
 SB_SEC_DIR="$SB_HOME/sec"
-SBBOX_VERSION="v2.7.79"
+SBBOX_VERSION="v2.8.00"
 SB_URL="https://raw.githubusercontent.com/shjzzzz/sbbox-tuned/main/sbbox.sh"
 # root 装到 /usr/local/bin（始终在 PATH 中）；非 root 退回 ~/bin
 if [ "$(id -u 2>/dev/null)" = "0" ] && [ -d /usr/local/bin ]; then
@@ -71,6 +71,8 @@ reap_sni="${reap_sni:-${reality_sni:-}}"    # Reality 伪装目标 SNI（默认 
 port_rea="${port_rea:-${port_vl:-}}"        # Reality 监听端口（默认随机 10000-29999 五位数低位）
 anyp="${anyp:-${any:-}}"                    # 默认四大主力之一：AnyTLS + TLS 节点（抗 TLS-in-TLS 特征与 0-RTT 极速会话池）
 port_any="${port_any:-}"                    # AnyTLS 监听端口（默认随机 10000-29999 五位数低位）
+snellp="${snellp:-${snell:-${snp:-}}}"      # Snell v6 协议节点（Surge / Mihomo / Shadowrocket 原生支持，免证书）
+port_snell="${port_snell:-}"                # Snell v6 监听端口（默认随机 10000-29999 五位数低位）
 stlsp="${stlsp:-}"                         # ShadowTLS-SS2022（影子伪装）：stlsp=1
 port_shp="${port_shp:-}"                   # ShadowTLS 监听端口（默认 8448）
 arp="${arp:-}"                             # AnyTLS-Reality（通用真实伪装）：arp=1
@@ -208,13 +210,13 @@ v4v6() {
 showmode() {
   echo "==========================================================="
   echo "sbbox $SBBOX_VERSION — Sing-box-Only 协议安全加固代理脚本"
-  echo "支持协议（2026梯队）：Hysteria2 / Naiveproxy / Tuic / AnyTLS（可选：VLESS-Reality）"
+  echo "支持协议（2026梯队）：Hysteria2 / Naiveproxy / Tuic / AnyTLS / Snell v6（可选：VLESS-Reality）"
   echo "默认四大主力（Hysteria2/Naive/TUIC/AnyTLS）：bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/sbbox-tuned/main/sbbox.sh) alns=1 ym=你的域名"
   echo "指定协议（三大主力）：bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/sbbox-tuned/main/sbbox.sh) hyp=1 nvp=1 tup=1 alns=1 ym=你的域名"
-  echo "全协议（含 Reality）：bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/sbbox-tuned/main/sbbox.sh) reap=1 alns=1 ym=你的域名"
+  echo "全协议（含 Reality/Snell）：bash <(curl -Ls https://raw.githubusercontent.com/shjzzzz/sbbox-tuned/main/sbbox.sh) reap=1 snellp=1 alns=1 ym=你的域名"
   echo "管理菜单：sbbox（终端中直接输入）【或】 sbbox menu"
   echo "云端放行端口清单：sbbox ports（连不上但本机自检正常时，先核对云厂商安全组）"
-  echo "协议开关：sbbox proto show | sbbox proto reality on|off（默认安装四大主力，VLESS-Reality 等备用协议在此开关）"
+  echo "协议开关：sbbox proto show | sbbox proto snell on|off（支持 hy2/naive/tuic/anytls/reality/snell）"
   echo "节点本机自测：sbbox selftest（逐个节点在服务器本机真实握手，区分服务端问题与网络问题）"
   echo "出站分流：sbbox block cn|ads on|off（屏蔽回国 IP / 广告域名，默认关闭）| sbbox block show | sbbox block update"
   echo "显示节点信息：sbbox list 【或】 bash sbbox.sh list"
@@ -233,11 +235,12 @@ showmode() {
   echo "自检修复：sbbox doctor"
   echo "卸载：sbbox del"
   echo "-----------------------------------------------------------"
-  echo "环境变量（安装期）：hyp=1 nvp=1 tup=1 anyp=1 (可选 reap=1)"
+  echo "环境变量（安装期）：hyp=1 nvp=1 tup=1 anyp=1 (可选 reap=1 snellp=1)"
   echo "  hyp=1    🥇 启用 Hysteria2 + TLS（高速主力，支持端口跳跃与混淆）"
   echo "  nvp=1    🥈 启用 NaiveProxy (H3+H2，Chromium 内核级反探测伪装）"
   echo "  tup=1    🥉 启用 TUIC (v5，标准 QUIC 极速，Hysteria2 备选）"
   echo "  anyp=1   💣 启用 AnyTLS + TLS（新一代 TCP 主力，0-RTT 会话池与抗特征深度伪装）"
+  echo "  snellp=1 🚀 (可选) 启用 Snell v6 协议（Surge / Mihomo / Shadowrocket 原生支持，免证书）"
   echo "  reap=1   (可选) 启用 VLESS-Reality TCP 节点（免域名免证书，兼容旧客户端）"
   echo "  warp=ai|all  (可选) 自动启用 WARP 出站解锁（默认关闭；ai 仅解锁流媒体/AI，all 全量流量）"
   echo "  alns=1   启用 acme 证书（需 ym=你的域名）"
@@ -678,6 +681,7 @@ load_secrets() {
   nv_user=$(_load_sec naive_user)
   nv_pw=$(_load_sec naive_pw)
   pw_any=$(_load_sec anytls_pw)
+  psk_snell=$(_load_sec snell_psk)
   pw_stls=$(_load_sec shadowtls_pw)
   [ -s "$SB_SEC_DIR/ss2022_key" ] || openssl rand -base64 16 > "$SB_SEC_DIR/ss2022_key"
   pw_ss2022=$(cat "$SB_SEC_DIR/ss2022_key")
@@ -1826,6 +1830,18 @@ installsb() {
     fi
   fi
   [ -n "$anyp" ] && { assign_port any "${port_any:-28443}"; echo "AnyTLS 端口：$port_any"; open_port "$port_any" tcp; }
+  if [ -n "$snellp" ]; then
+    assign_port snell "$port_snell"
+    echo "Snell v6 端口：$port_snell"
+    open_port "$port_snell" tcp
+  else
+    if [ -f "$SB_HOME/port_snell" ]; then
+      local _unneeded_snell
+      _unneeded_snell=$(cat "$SB_HOME/port_snell" 2>/dev/null || true)
+      [ -n "$_unneeded_snell" ] && close_port "$_unneeded_snell" tcp
+      rm -f "$SB_HOME/port_snell" "$SB_HOME/proto_snell"
+    fi
+  fi
   [ -n "$stlsp" ] && { assign_port shp "${port_shp:-8448}"; echo "ShadowTLS 端口：$port_shp"; open_port "$port_shp" tcp; }
   [ -n "$arp" ] && { assign_port arp "${port_arp:-8449}"; echo "AnyTLS-Reality 端口：$port_arp"; open_port "$port_arp" tcp; }
 
@@ -2178,6 +2194,23 @@ EOF
 EOF
   fi
 
+  # Snell v6 (sing-box 1.14: TCP + PSK-derived traffic shaping & encryption)
+  if [ -n "$snellp" ]; then
+    cat >> "$SB_CONF" <<EOF
+        {
+            "type": "snell",
+            "tag": "snell-in",
+            "listen": "::",
+            "listen_port": $port_snell,
+            "tcp_fast_open": false,
+            "tcp_multi_path": false,
+            "version": 6,
+            "psk": "$psk_snell",
+            "mode": "default"
+        },
+EOF
+  fi
+
 
   # ShadowTLS-SS2022（影子伪装）与 AnyTLS-Reality（通用真实伪装）。
   # 伪装目标：本机 8003 是自域名证书站（xh 装机时存在），没有则用 ym:443。
@@ -2524,6 +2557,16 @@ gen_client() {
     echo "$rea_link" >> "$SB_LINK"
     echo "💣【 (可选) VLESS-Reality (兼容性节点) 】节点信息如下："
     echo "$rea_link"; echo
+  fi
+
+  # 6. Snell v6 (Surge / Shadowrocket / Mihomo 原生支持，免证书)
+  if [ -n "$snellp" ]; then
+    local snell_link="snell://$psk_snell@$add:$port_snell?version=6#Snell-v6"
+    echo "$snell_link" >> "$SB_LINK"
+    echo "💣【 🚀 Snell v6 (Surge / Mihomo / Shadowrocket 原生支持) 】节点信息如下："
+    echo "$snell_link"
+    echo "  Surge 配置: Snell-v6 = snell, $add, $port_snell, psk=$psk_snell, version=6"
+    echo
   fi
 
   # 6. Nowhere (上下行分流抗QoS / 常用稳定双模式)
@@ -3437,6 +3480,20 @@ gen_client_sbox() {
     tags+=("VLESS-Reality")
   fi
 
+  # 6. Snell v6 (sing-box 1.14+)
+  if [ -n "$snellp" ]; then
+    ob+=('{
+        "type": "snell",
+        "tag": "Snell-v6",
+        "server": "'"$add"'",
+        "server_port": '"$port_snell"',
+        "version": 6,
+        "psk": "'"$psk_snell"'",
+        "mode": "default"
+    }')
+    tags+=("Snell-v6")
+  fi
+
 
   # ShadowTLS-SS2022（影子伪装）：ss 出站经 ShadowTLS 底层出站发出（底层不进选择器）
   if [ -n "$stlsp" ] && [ "$CERT_OK" = 1 ]; then
@@ -3717,6 +3774,20 @@ gen_client_clash() {
 
     groups="$groups
       - VLESS-Reality"
+  fi
+
+  # 6. Snell v6 (Mihomo / Clash Meta 原生支持)
+  if [ -n "$snellp" ]; then
+    proxies="$proxies
+  - name: Snell-v6
+    server: $add
+    port: $port_snell
+    type: snell
+    psk: $psk_snell
+    version: 6"
+
+    groups="$groups
+      - Snell-v6"
   fi
 
   cat > "$SB_HOME/clmi.yaml" <<EOF
@@ -4997,8 +5068,8 @@ cmd_brutal() {
 cmd_port() {
   [ -x "$SB_BIN" ] || { error "未安装 sbbox，无法更改端口"; exit 1; }
   load_state
-  local in_tu="${1:-}" in_hy2="${2:-}" in_nv="${3:-}" in_rea="${4:-}" in_any="${5:-}" in_sub="${6:-}"
-  local old_tu="$port_tu" old_hy2="$port_hy2" old_nv="$port_nv" old_rea="$port_rea" old_any="$port_any" old_sub="$subport"
+  local in_tu="${1:-}" in_hy2="${2:-}" in_nv="${3:-}" in_rea="${4:-}" in_any="${5:-}" in_snell="${6:-}" in_sub="${7:-}"
+  local old_tu="$port_tu" old_hy2="$port_hy2" old_nv="$port_nv" old_rea="$port_rea" old_any="$port_any" old_snell="$port_snell" old_sub="$subport"
 
   if [ "$in_tu" = "show" ]; then
     echo "当前 sbbox 监听端口："
@@ -5007,19 +5078,20 @@ cmd_port() {
     [ -n "$old_nv" ] && echo "  Naiveproxy:    $old_nv (TCP/UDP)"
     [ -n "$old_rea" ] && echo "  VLESS-Reality: $old_rea (TCP)"
     [ -n "$old_any" ] && echo "  AnyTLS:        $old_any (TCP)"
+    [ -n "$old_snell" ] && echo "  Snell v6:      $old_snell (TCP)"
     [ -n "$old_sub" ] && echo "  订阅服务:      $old_sub (TCP)"
     return 0
   fi
 
   info "正在更新 sbbox 端口配置并同步（五位数低位随机 10000-29999）……"
 
-  local new_tu="" new_hy2="" new_nv="" new_rea="" new_any="" new_sub=""
+  local new_tu="" new_hy2="" new_nv="" new_rea="" new_any="" new_snell="" new_sub=""
 
   _gen_rand_port() {
     local p _try=0
     while :; do
       p=$(shuf -i 10000-29999 -n 1)
-      if [ "$p" = "$new_tu" ] || [ "$p" = "$new_hy2" ] || [ "$p" = "$new_nv" ] || [ "$p" = "$new_rea" ] || [ "$p" = "$new_any" ] || [ "$p" = "$new_sub" ]; then continue; fi
+      if [ "$p" = "$new_tu" ] || [ "$p" = "$new_hy2" ] || [ "$p" = "$new_nv" ] || [ "$p" = "$new_rea" ] || [ "$p" = "$new_any" ] || [ "$p" = "$new_snell" ] || [ "$p" = "$new_sub" ]; then continue; fi
       if [ -n "$old_sub" ] && [ -z "$new_sub" ] && [ "$p" = "$old_sub" ]; then continue; fi
       if [ -n "$hyjpt" ]; then
         local hop_start hop_end
@@ -5083,6 +5155,16 @@ cmd_port() {
     new_any=$(_gen_rand_port)
   fi
 
+  if [ -n "$in_snell" ] && [ "$in_snell" != "rand" ] && [ "$in_snell" != "random" ]; then
+    if [ "$in_snell" = "keep" ] || [ "$in_snell" = "same" ]; then
+      new_snell="$old_snell"
+    else
+      new_snell="$in_snell"
+    fi
+  elif [ "$snellp" = yes ]; then
+    new_snell=$(_gen_rand_port)
+  fi
+
   if [ -n "$in_sub" ]; then
     if [ "$in_sub" = "rand" ] || [ "$in_sub" = "random" ]; then
       new_sub=$(_gen_rand_port)
@@ -5112,6 +5194,7 @@ cmd_port() {
   [ -n "$old_nv" ] && { _clean_old_port "$old_nv" tcp; _clean_old_port "$old_nv" udp; }
   [ -n "$old_rea" ] && _clean_old_port "$old_rea" tcp
   [ -n "$old_any" ] && _clean_old_port "$old_any" tcp
+  [ -n "$old_snell" ] && _clean_old_port "$old_snell" tcp
   [ -n "$new_sub" ] && [ -n "$old_sub" ] && _clean_old_port "$old_sub" tcp
 
   # 清理旧 Hysteria2 DNAT 规则
@@ -5138,6 +5221,7 @@ cmd_port() {
     port_rea=""
   fi
   [ -n "$new_any" ] && { echo "$new_any" > "$SB_HOME/port_any"; port_any="$new_any"; }
+  [ -n "$new_snell" ] && { echo "$new_snell" > "$SB_HOME/port_snell"; port_snell="$new_snell"; }
   [ -n "$new_sub" ] && { echo "$new_sub" > "$SB_HOME/subport"; subport="$new_sub"; }
 
   v4v6
@@ -5736,7 +5820,7 @@ cmd_selftest() {
   tags=$(python3 - "$SB_HOME/sbox_client.json" <<'PY'
 import json, sys
 c = json.load(open(sys.argv[1]))
-print(' '.join(o['tag'] for o in c['outbounds'] if o.get('type') in ('hysteria2', 'anytls', 'naive', 'tuic', 'vless')))
+print(' '.join(o['tag'] for o in c['outbounds'] if o.get('type') in ('hysteria2', 'anytls', 'naive', 'tuic', 'vless', 'snell')))
 PY
 )
   echo ""
@@ -5793,7 +5877,7 @@ cmd_proto() {
   [ -x "$SB_BIN" ] || { error "未安装 sbbox，无法切换协议"; exit 1; }
   local pname="${1:-show}" act="${2:-show}" pf label n snap f
   # 只认磁盘上记录的状态，不受当前 shell 里残留的环境变量影响
-  tup="" hyp="" nvp="" reap="" anyp=""
+  tup="" hyp="" nvp="" reap="" anyp="" snellp=""
   load_state
   case "$pname" in
     hy2|hysteria2) pf=proto_hyp; label="Hysteria2" ;;
@@ -5801,24 +5885,25 @@ cmd_proto() {
     tuic|tu) pf=proto_tup; label="TUIC" ;;
     reality|rea|vless) pf=proto_rea; label="VLESS-Reality" ;;
     anytls|any) pf=proto_any; label="AnyTLS" ;;
+    snell|sn) pf=proto_snell; label="Snell v6" ;;
     show|status|"")
-      echo "当前协议（默认安装四大主力，Reality 为可选备用）："
-      for n in "hy2:proto_hyp:Hysteria2" "naive:proto_nvp:Naiveproxy" "tuic:proto_tup:TUIC" "anytls:proto_any:AnyTLS" "reality:proto_rea:VLESS-Reality"; do
+      echo "当前协议（默认安装四大主力，Reality / Snell 为可选备用）："
+      for n in "hy2:proto_hyp:Hysteria2" "naive:proto_nvp:Naiveproxy" "tuic:proto_tup:TUIC" "anytls:proto_any:AnyTLS" "snell:proto_snell:Snell v6" "reality:proto_rea:VLESS-Reality"; do
         if [ -f "$SB_HOME/$(echo "$n" | cut -d: -f2)" ]; then
           printf '  %-9s %-14s %s\n' "$(echo "$n" | cut -d: -f1)" "$(echo "$n" | cut -d: -f3)" "已开启"
         else
           printf '  %-9s %-14s %s\n' "$(echo "$n" | cut -d: -f1)" "$(echo "$n" | cut -d: -f3)" "未开启"
         fi
       done
-      echo "用法：sbbox proto <hy2|naive|tuic|anytls|reality> on|off"
+      echo "用法：sbbox proto <hy2|naive|tuic|anytls|snell|reality> on|off"
       return 0
       ;;
-    *) echo "用法：sbbox proto [show | hy2|naive|tuic|reality|anytls on|off]"; return 1 ;;
+    *) echo "用法：sbbox proto [show | hy2|naive|tuic|reality|anytls|snell on|off]"; return 1 ;;
   esac
   # 能正常工作的协议数：Naive / AnyTLS 没有真实证书时不会生成入站，不算数
   _proto_working_count() {
     local c=0 x
-    for x in proto_tup proto_hyp proto_rea; do [ -f "$SB_HOME/$x" ] && c=$((c+1)); done
+    for x in proto_tup proto_hyp proto_rea proto_snell; do [ -f "$SB_HOME/$x" ] && c=$((c+1)); done
     if cert_ready; then
       for x in proto_nvp proto_any; do [ -f "$SB_HOME/$x" ] && c=$((c+1)); done
     fi
@@ -5869,13 +5954,23 @@ cmd_proto() {
       [ -n "$_p" ] || { error "找不到可用的随机端口，未做任何修改"; rm -rf "$snap"; return 1; }
       echo "$_p" > "$SB_HOME/port_any"
     fi
+    if [ "$pf" = proto_snell ] && [ ! -s "$SB_HOME/port_snell" ]; then
+      local _p="" _try=0
+      while [ "$_try" -lt 100 ]; do
+        _p=$(shuf -i 10000-29999 -n 1 2>/dev/null)
+        if [ -n "$_p" ] && ! is_port_conflict "$_p"; then break; fi
+        _p=""; _try=$((_try+1))
+      done
+      [ -n "$_p" ] || { error "找不到可用的随机端口，未做任何修改"; rm -rf "$snap"; return 1; }
+      echo "$_p" > "$SB_HOME/port_snell"
+    fi
     touch "$SB_HOME/$pf"
   else
     rm -f "$SB_HOME/$pf"
   fi
   # 关闭时：先记下旧端口，等配置重生成成功后关防火墙并删端口文件
-  local old_tu="$port_tu" old_hy2="$port_hy2" old_nv="$port_nv" old_rea="$port_rea" old_any="$port_any"
-  tup="" hyp="" nvp="" reap="" anyp=""
+  local old_tu="$port_tu" old_hy2="$port_hy2" old_nv="$port_nv" old_rea="$port_rea" old_any="$port_any" old_snell="$port_snell"
+  tup="" hyp="" nvp="" reap="" anyp="" snellp=""
   v4v6
   load_state
   [ -s "$SB_HOME/subport" ] && sub=1
@@ -5909,6 +6004,7 @@ cmd_proto() {
       proto_nvp) [ -n "$old_nv" ] && { close_port "$old_nv" tcp; close_port "$old_nv" udp; }; rm -f "$SB_HOME/port_nv" ;;
       proto_rea) [ -n "$old_rea" ] && close_port "$old_rea" tcp; rm -f "$SB_HOME/port_rea" ;;
       proto_any) [ -n "$old_any" ] && close_port "$old_any" tcp; rm -f "$SB_HOME/port_any" ;;
+      proto_snell) [ -n "$old_snell" ] && close_port "$old_snell" tcp; rm -f "$SB_HOME/port_snell" ;;
     esac
     load_state
   fi
@@ -6025,7 +6121,8 @@ _menu_define() {
     "Naiveproxy 节点开关::menu_choose MENU_PROTO_NAIVE"
     "TUIC 节点开关::menu_choose MENU_PROTO_TUIC"
     "VLESS-Reality 节点开关::menu_choose MENU_PROTO_REALITY"
-    "AnyTLS 节点开关::menu_choose MENU_PROTO_ANYTLS")
+    "AnyTLS 节点开关::menu_choose MENU_PROTO_ANYTLS"
+    "Snell v6 节点开关::menu_choose MENU_PROTO_SNELL")
 
   MENU_PROTO_HY2=("Hysteria2 节点开关"
     "查看状态::cmd_proto show"
@@ -6052,10 +6149,15 @@ _menu_define() {
     "开启 AnyTLS::cmd_proto anytls on"
     "关闭 AnyTLS::cmd_proto anytls off")
 
+  MENU_PROTO_SNELL=("Snell v6 节点开关"
+    "查看状态::cmd_proto show"
+    "开启 Snell v6::cmd_proto snell on"
+    "关闭 Snell v6::cmd_proto snell off")
+
   MENU_PORT=("节点端口管理与重新分配"
     "查看当前各节点监听端口::cmd_port show"
     "自动随机重新分配全部节点端口 (10000-29999)::cmd_port"
-    "自定义指定端口…::menu_ask [tu] [hy2] [nv] [rea] [any]端口 cmd_port")
+    "自定义指定端口…::menu_ask [tu] [hy2] [nv] [rea] [any] [snell]端口 cmd_port")
 
   MENU_HOP=("Hysteria2 端口跳跃管理"
     "查看当前端口跳跃状态::cmd_hop show"
@@ -6358,9 +6460,15 @@ main() {
       ;;
   esac
 
+  case "$snellp" in
+    0|no|off|false|NO|OFF|FALSE) snellp="" ;;
+    1|yes|on|true|YES|ON|TRUE) snellp=1 ;;
+    "") snellp="" ;;
+  esac
+
   # 未指定任何协议：默认装四大主力（Hysteria2 / Naiveproxy / TUIC / AnyTLS）；
-  # VLESS-Reality 等备用协议装好后用 sbbox proto reality on 开启。Naiveproxy 与 AnyTLS 必须有真实证书，没给域名就跳过它们。
-  if [ -z "$tup" ] && [ -z "$hyp" ] && [ -z "$nvp" ] && [ -z "$reap" ] && [ -z "$anyp" ] && [ -z "$stlp" ] && [ -z "$reap_off" ]; then
+  # VLESS-Reality / Snell v6 等备用协议装好后用 sbbox proto snell on 开启。Naiveproxy 与 AnyTLS 必须有真实证书，没给域名就跳过它们。
+  if [ -z "$tup" ] && [ -z "$hyp" ] && [ -z "$nvp" ] && [ -z "$reap" ] && [ -z "$anyp" ] && [ -z "$snellp" ] && [ -z "$stlp" ] && [ -z "$reap_off" ]; then
     hyp=1 tup=1
     if [ -n "$alns" ] || [ -n "$ym" ]; then
       nvp=1 anyp=1
@@ -6370,8 +6478,8 @@ main() {
     info "未指定协议，使用默认协议集：Hysteria2 / TUIC$([ -n "$nvp" ] && echo ' / Naiveproxy / AnyTLS')"
   fi
 
-  if [ -z "$tup" ] && [ -z "$hyp" ] && [ -z "$nvp" ] && [ -z "$reap" ] && [ -z "$anyp" ] && [ -z "$stlp" ]; then
-    error "未指定任何协议。请至少设置一个：hyp=1 nvp=1 tup=1 (可选 reap=1 anyp=1)"
+  if [ -z "$tup" ] && [ -z "$hyp" ] && [ -z "$nvp" ] && [ -z "$reap" ] && [ -z "$anyp" ] && [ -z "$snellp" ] && [ -z "$stlp" ]; then
+    error "未指定任何协议。请至少设置一个：hyp=1 nvp=1 tup=1 (可选 reap=1 anyp=1 snellp=1)"
     echo ""
     showmode
     exit 1
@@ -6463,7 +6571,7 @@ install_cmd() {
 save_state() {
   # 先清空再按本次实际启用写入：重装若减少协议，旧标记必须消失，
   # 否则 list 会生成服务端已不存在的节点链接
-  rm -f "$SB_HOME"/proto_tup "$SB_HOME"/proto_hyp "$SB_HOME"/proto_nvp "$SB_HOME"/proto_rea "$SB_HOME"/proto_any 2>/dev/null
+  rm -f "$SB_HOME"/proto_tup "$SB_HOME"/proto_hyp "$SB_HOME"/proto_nvp "$SB_HOME"/proto_rea "$SB_HOME"/proto_any "$SB_HOME"/proto_snell 2>/dev/null
   [ -n "$tup" ] && touch "$SB_HOME/proto_tup"
   [ -n "$hyp" ] && touch "$SB_HOME/proto_hyp"
   [ -n "$nvp" ] && touch "$SB_HOME/proto_nvp"
@@ -6475,6 +6583,12 @@ save_state() {
   fi
   [ -n "$anyp" ] && touch "$SB_HOME/proto_any"
   [ -n "$port_any" ] && echo "$port_any" > "$SB_HOME/port_any"
+  if [ -n "$snellp" ]; then
+    touch "$SB_HOME/proto_snell"
+    [ -n "$port_snell" ] && echo "$port_snell" > "$SB_HOME/port_snell"
+  else
+    rm -f "$SB_HOME/proto_snell" "$SB_HOME/port_snell"
+  fi
   echo "$ym" > "$SB_HOME/ym"
   # 日志级别持久化：之后 proto / port / rotate 重新生成配置时沿用安装时的选择，不会悄悄变回默认值
   [ -n "$sblevel" ] && echo "$sblevel" > "$SB_HOME/sblevel"
@@ -7084,6 +7198,7 @@ cloud_ports_hint() {
   [ "$tup" = yes ] && [ -n "$port_tu" ]  && lines="$lines\n  UDP $port_tu   Tuic"
   [ "$nvp" = yes ] && [ -n "$port_nv" ]  && lines="$lines\n  TCP+UDP $port_nv   Naiveproxy（h2 走 TCP，h3 走 UDP）"
   [ "$anyp" = yes ] && [ -n "$port_any" ] && lines="$lines\n  TCP $port_any   AnyTLS"
+  [ "$snellp" = yes ] && [ -n "$port_snell" ] && lines="$lines\n  TCP $port_snell   Snell v6"
   [ "$reap" = yes ] && [ -n "$port_rea" ] && lines="$lines\n  TCP $port_rea   VLESS-Reality"
   [ "$sub" = 1 ] && [ -n "${subport:-}" ] && lines="$lines\n  TCP $subport   订阅服务"
   if [ "${CERT_OK:-0}" = 1 ] || [ -n "${alns:-}" ]; then lines="$lines\n  TCP 80   证书申请 / 续期（acme HTTP-01，不放行则证书到期后失效）"; fi
@@ -7173,6 +7288,7 @@ doctor() {
   [ "$hyp" = yes ] && check_one Hysteria2 "$port_hy2" udp
   [ "$reap" = yes ] && check_one "VLESS-Reality" "$port_rea" tcp
   [ "$anyp" = yes ] && check_one "AnyTLS" "$port_any" tcp
+  [ "$snellp" = yes ] && check_one "Snell v6" "$port_snell" tcp
   [ "$nvp" = yes ] && check_one Naiveproxy "$port_nv" tcp
   [ "$tup" = yes ] && check_one Tuic "$port_tu" udp
   if [ "$sub" = 1 ] && [ -n "$subport" ]; then
@@ -7232,12 +7348,13 @@ doctor() {
     sbrestart
     sleep 2
     # 重启后复查每个有问题的端口，仍未恢复则重新生成配置
-    for spec in "Hysteria2:$port_hy2:udp" "VLESS-Reality:$port_rea:tcp" "AnyTLS:$port_any:tcp" "Naiveproxy:$port_nv:tcp" "Tuic:$port_tu:udp"; do
+    for spec in "Hysteria2:$port_hy2:udp" "VLESS-Reality:$port_rea:tcp" "AnyTLS:$port_any:tcp" "Snell-v6:$port_snell:tcp" "Naiveproxy:$port_nv:tcp" "Tuic:$port_tu:udp"; do
       name=${spec%%:*}; rest=${spec#*:}; p=${rest%%:*}; proto=${rest##*:}
       case "$name" in
         Hysteria2)     [ "$hyp" = yes ] || continue ;;
         VLESS-Reality) [ "$reap" = yes ] || continue ;;
         AnyTLS)        [ "$anyp" = yes ] || continue ;;
+        Snell-v6)      [ "$snellp" = yes ] || continue ;;
         Naiveproxy)    [ "$nvp" = yes ] || continue ;;
         Tuic)          [ "$tup" = yes ] || continue ;;
       esac
@@ -7275,11 +7392,13 @@ load_state() {
   [ -f "$SB_HOME/proto_nvp" ] && nvp=yes
   [ -f "$SB_HOME/proto_rea" ] && reap=yes
   [ -f "$SB_HOME/proto_any" ] && anyp=yes
+  [ -f "$SB_HOME/proto_snell" ] && snellp=yes
   [ -f "$SB_HOME/port_tu" ] && port_tu=$(cat "$SB_HOME/port_tu")
   [ -f "$SB_HOME/port_hy2" ] && port_hy2=$(cat "$SB_HOME/port_hy2")
   [ -f "$SB_HOME/port_nv" ] && port_nv=$(cat "$SB_HOME/port_nv")
   [ -f "$SB_HOME/port_rea" ] && port_rea=$(cat "$SB_HOME/port_rea")
   [ -f "$SB_HOME/port_any" ] && port_any=$(cat "$SB_HOME/port_any")
+  [ -f "$SB_HOME/port_snell" ] && port_snell=$(cat "$SB_HOME/port_snell")
   [ -f "$SB_HOME/hyjpt" ] && hyjpt=$(cat "$SB_HOME/hyjpt")
   if [ -z "$hyup" ] && [ -z "$hydown" ] && [ -s "$SB_HOME/hybw" ]; then
     hyup=$(awk '{print $1}' "$SB_HOME/hybw"); hydown=$(awk '{print $2}' "$SB_HOME/hybw")
