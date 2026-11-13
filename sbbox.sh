@@ -1911,18 +1911,13 @@ installsb() {
   esac
 
   # ---------- 1.14 乐观 DNS 与缓存 ----------
-  # v2.7.37：首选 9.9.9.10（Quad9 不拦截版，DoT）。解析耗时只在每个域名首次查询时付一次，
-  # 返回的 CDN 边缘远近却决定之后每条连接的延迟。2026-09-30 本机 32 个常用域名 × 各 3 次：
-  # 比最优边缘慢 3ms 以上的，8.8.8.8 有 10 个、1.1.1.1 有 5 个、9.9.9.10 只有 1 个
-  # （Apple / iCloud / Microsoft 等 Akamai 系差 10~50ms）；未缓存解析 9.9.9.10 与 1.1.1.1 相当（2~9ms）。
+  # 全部 DNS 统一为 https://1.1.1.1/dns-query，不留 9.9.9.10 / 明文 UDP / 系统解析器兜底：
+  # 兜底会在 1.1.1.1 不可达时把查询明文或旁路泄露出去。服务器自身的解析也走下面的 dns-in（127.0.0.53）。
   local dns_block
   if [ "$dns_optimistic" != "0" ]; then
     dns_block='    "dns": {
         "servers": [
-            { "type": "https", "tag": "dns-secure", "server": "1.1.1.1" },
-            { "type": "https", "tag": "dns-backup", "server": "9.9.9.10" },
-            { "type": "udp", "tag": "dns-udp", "server": "1.1.1.1" },
-            { "type": "local", "tag": "dns-local", "detour": "direct" }
+            { "type": "https", "tag": "dns-secure", "server": "1.1.1.1" }
         ],
         "strategy": "'"$sb_strategy"'",
         "disable_cache": false,
@@ -1933,10 +1928,7 @@ installsb() {
   else
     dns_block='    "dns": {
         "servers": [
-            { "type": "https", "tag": "dns-secure", "server": "1.1.1.1" },
-            { "type": "https", "tag": "dns-backup", "server": "9.9.9.10" },
-            { "type": "udp", "tag": "dns-udp", "server": "1.1.1.1" },
-            { "type": "local", "tag": "dns-local", "detour": "direct" }
+            { "type": "https", "tag": "dns-secure", "server": "1.1.1.1" }
         ],
         "strategy": "'"$sb_strategy"'",
         "disable_cache": false
@@ -2288,6 +2280,13 @@ EOF
     fi
   fi
 
+  # 本机 DoH 转发器：/etc/resolv.conf 与 nginx resolver 指向 127.0.0.53，经 hijack-dns 走 dns-secure（DoH 1.1.1.1），
+  # 服务器上除 Xray / sing-box 自身外的解析（nginx、apt、acme、curl）不再发明文 DNS（含 OCI 内网 169.254.169.254）。
+  # 仅监听回环，不对外。
+  cat >> "$SB_CONF" <<EOF
+        { "type": "direct", "tag": "dns-in", "listen": "127.0.0.53", "listen_port": 53 },
+EOF
+
   # 收尾：outbounds + route + experimental
   # 出站防护：
   #   1) 私网/回环一律拒绝 —— 否则任何持有节点凭据的人都能拿这台机器当跳板，
@@ -2297,10 +2296,11 @@ EOF
   # 必须先 resolve 再判私有地址：ip_is_private 只比对目标 IP，
   # 客户端若把目标写成域名（如 127.0.0.1.nip.io、指向 169.254.169.254 的域名），
   # 规则不匹配即被放行。resolve action 先把域名解析成 IP，拦截才真正生效。
-  local route_rules=""
+  local route_rules="            { \"inbound\": \"dns-in\", \"action\": \"hijack-dns\" },
+"
   case "$blkport" in
     0|no|off|false) : ;;
-    *) route_rules="            { \"action\": \"reject\", \"port\": [ 25, 135, 137, 138, 139, 445, 465, 587 ] },
+    *) route_rules="${route_rules}            { \"action\": \"reject\", \"port\": [ 25, 135, 137, 138, 139, 445, 465, 587 ] },
 " ;;
   esac
   route_rules="${route_rules}            { \"action\": \"reject\", \"protocol\": [ \"bittorrent\" ] },
@@ -3597,11 +3597,10 @@ gen_client_sbox() {
     "dns": {
         "servers": [
             { "tag": "remote", "type": "https", "server": "1.1.1.1", "detour": "select" },
-            { "tag": "local", "type": "https", "server": "223.5.5.5", "detour": "direct" },
+            { "tag": "local", "type": "https", "server": "1.1.1.1", "detour": "direct" },
             { "tag": "fakeip", "type": "fakeip", "inet4_range": "198.18.0.0/15", "inet6_range": "fc00::/18" }
         ],
         "rules": [
-            { "rule_set": "geosite-cn", "server": "local" },
             { "inbound": "tun-in", "query_type": ["A", "AAAA"], "server": "fakeip" }
         ],
         "strategy": "prefer_ipv4",
@@ -3831,13 +3830,10 @@ dns:
   respect-rules: true
   default-nameserver:
     - https://1.1.1.1/dns-query
-    - https://9.9.9.9/dns-query
   proxy-server-nameserver:
     - https://1.1.1.1/dns-query
-    - https://9.9.9.9/dns-query
   nameserver:
     - https://1.1.1.1/dns-query
-    - https://9.9.9.9/dns-query
 proxies:$proxies
 
 proxy-groups:
@@ -4054,7 +4050,7 @@ hy2_external_sync_secrets() {
 # 外置 Hysteria2 的出站 DNS（v2.7.37）。yaml 不写 resolver 时走系统 resolved，
 # 本机上游首选 8.8.8.8：它带 ECS，对 gstatic / Apple / Microsoft 等返回 8~14ms 外的边缘，
 # 同一客户端经外置 Hy2 取 generate_204 每次比 Xray 内置 Hy2 慢 ~28ms（抓包确认是服务端→目标 RTT）。
-# 与 sb.json 的 dns-secure 对齐到 9.9.9.10。只在缺 resolver 段时追加，用户自己写的原样保留。
+# 与 sb.json 的 dns-secure 对齐到 1.1.1.1（DoT）。只在缺 resolver 段时追加，用户自己写的原样保留。
 # 返回 0 表示改动了文件（调用方负责重启 hysteria-sbbox）。
 hy2_external_sync_resolver() {
   local f=/etc/hysteria/sbbox.yaml
@@ -4065,13 +4061,13 @@ hy2_external_sync_resolver() {
     if grep -q '^  type: udp$' "$f" 2>/dev/null && grep -q '^    addr: 9.9.9.10:53$' "$f" 2>/dev/null; then
       cp -a "$f" "$f.bak" 2>/dev/null
       sed -i -e 's|^  type: udp$|  type: tls|' -e 's|^  udp:$|  tls:|' \
-             -e 's|^    addr: 9.9.9.10:53$|    addr: 9.9.9.10:853\n    sni: dns10.quad9.net\n    insecure: false|' "$f"
+             -e 's|^    addr: 9.9.9.10:53$|    addr: 1.1.1.1:853\n    sni: one.one.one.one\n    insecure: false|' "$f"
       return 0
     fi
     return 1
   fi
   cp -a "$f" "$f.bak" 2>/dev/null
-  printf '\n# 出站 DNS：与 sing-box 服务端一致，选近端 CDN 边缘（sbbox v2.7.37）\nresolver:\n  type: tls\n  tls:\n    addr: 9.9.9.10:853\n    timeout: 4s\n    sni: dns10.quad9.net\n    insecure: false\n' >> "$f"
+  printf '\n# 出站 DNS：与 sing-box 服务端一致，选近端 CDN 边缘（sbbox v2.7.37）\nresolver:\n  type: tls\n  tls:\n    addr: 1.1.1.1:853\n    timeout: 4s\n    sni: one.one.one.one\n    insecure: false\n' >> "$f"
 }
 
 hy2_external_restart() {
@@ -7341,7 +7337,7 @@ doctor() {
   # 外置 Hysteria2 出站 DNS 未指定 → 补上并重启
   if hy2_external && hy2_external_sync_resolver; then
     systemctl restart hysteria-sbbox >/dev/null 2>&1 && {
-      echo -e "外置 Hysteria2 出站 DNS：${GREEN}已指定 9.9.9.10（DoT）${NC}"; fixed=$((fixed+1)); }
+      echo -e "外置 Hysteria2 出站 DNS：${GREEN}已指定 1.1.1.1（DoT）${NC}"; fixed=$((fixed+1)); }
   fi
 
   # 续期钩子未挂 → 挂上
