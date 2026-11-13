@@ -73,6 +73,7 @@ anyp="${anyp:-${any:-}}"                    # 默认四大主力之一：AnyTLS 
 port_any="${port_any:-}"                    # AnyTLS 监听端口（默认随机 10000-29999 五位数低位）
 snellp="${snellp:-${snell:-${snp:-}}}"      # Snell v6 协议节点（Surge / Mihomo / Shadowrocket 原生支持，免证书）
 port_snell="${port_snell:-}"                # Snell v6 监听端口（默认随机 10000-29999 五位数低位）
+port_snell5="${port_snell5:-}"              # Snell v5 监听端口（给 Mihomo：mihomo 只支持 Snell v1-v5，连不上 v6 入站；随 snell 一起启停）
 stlsp="${stlsp:-}"                         # ShadowTLS-SS2022（影子伪装）：stlsp=1
 port_shp="${port_shp:-}"                   # ShadowTLS 监听端口（默认 8448）
 arp="${arp:-}"                             # AnyTLS-Reality（通用真实伪装）：arp=1
@@ -1834,12 +1835,21 @@ installsb() {
     assign_port snell "$port_snell"
     echo "Snell v6 端口：$port_snell"
     open_port "$port_snell" tcp
+    assign_port snell5 "$port_snell5"
+    echo "Snell v5 端口（Mihomo 用）：$port_snell5"
+    open_port "$port_snell5" tcp
   else
     if [ -f "$SB_HOME/port_snell" ]; then
       local _unneeded_snell
       _unneeded_snell=$(cat "$SB_HOME/port_snell" 2>/dev/null || true)
       [ -n "$_unneeded_snell" ] && close_port "$_unneeded_snell" tcp
       rm -f "$SB_HOME/port_snell" "$SB_HOME/proto_snell"
+    fi
+    if [ -f "$SB_HOME/port_snell5" ]; then
+      local _unneeded_snell5
+      _unneeded_snell5=$(cat "$SB_HOME/port_snell5" 2>/dev/null || true)
+      [ -n "$_unneeded_snell5" ] && close_port "$_unneeded_snell5" tcp
+      rm -f "$SB_HOME/port_snell5"
     fi
   fi
   [ -n "$stlsp" ] && { assign_port shp "${port_shp:-8448}"; echo "ShadowTLS 端口：$port_shp"; open_port "$port_shp" tcp; }
@@ -2207,6 +2217,16 @@ EOF
             "version": 6,
             "psk": "$psk_snell",
             "mode": "default"
+        },
+        {
+            "type": "snell",
+            "tag": "snell-v5-in",
+            "listen": "::",
+            "listen_port": $port_snell5,
+            "tcp_fast_open": false,
+            "tcp_multi_path": false,
+            "version": 5,
+            "psk": "$psk_snell"
         },
 EOF
   fi
@@ -3776,18 +3796,18 @@ gen_client_clash() {
       - VLESS-Reality"
   fi
 
-  # 6. Snell v6 (Mihomo / Clash Meta 原生支持)
-  if [ -n "$snellp" ]; then
+  # 6. Snell v5 (Mihomo / Clash Meta：官方文档只支持 Snell v1-v5，v6 节点连不上；走独立的 v5 入站)
+  if [ -n "$snellp" ] && [ -n "$port_snell5" ]; then
     proxies="$proxies
-  - name: Snell-v6
+  - name: Snell-v5
     server: $add
-    port: $port_snell
+    port: $port_snell5
     type: snell
     psk: $psk_snell
-    version: 6"
+    version: 5"
 
     groups="$groups
-      - Snell-v6"
+      - Snell-v5"
   fi
 
   cat > "$SB_HOME/clmi.yaml" <<EOF
@@ -5969,7 +5989,7 @@ cmd_proto() {
     rm -f "$SB_HOME/$pf"
   fi
   # 关闭时：先记下旧端口，等配置重生成成功后关防火墙并删端口文件
-  local old_tu="$port_tu" old_hy2="$port_hy2" old_nv="$port_nv" old_rea="$port_rea" old_any="$port_any" old_snell="$port_snell"
+  local old_tu="$port_tu" old_hy2="$port_hy2" old_nv="$port_nv" old_rea="$port_rea" old_any="$port_any" old_snell="$port_snell" old_snell5="$port_snell5"
   tup="" hyp="" nvp="" reap="" anyp="" snellp=""
   v4v6
   load_state
@@ -6004,7 +6024,7 @@ cmd_proto() {
       proto_nvp) [ -n "$old_nv" ] && { close_port "$old_nv" tcp; close_port "$old_nv" udp; }; rm -f "$SB_HOME/port_nv" ;;
       proto_rea) [ -n "$old_rea" ] && close_port "$old_rea" tcp; rm -f "$SB_HOME/port_rea" ;;
       proto_any) [ -n "$old_any" ] && close_port "$old_any" tcp; rm -f "$SB_HOME/port_any" ;;
-      proto_snell) [ -n "$old_snell" ] && close_port "$old_snell" tcp; rm -f "$SB_HOME/port_snell" ;;
+      proto_snell) [ -n "$old_snell" ] && close_port "$old_snell" tcp; [ -n "$old_snell5" ] && close_port "$old_snell5" tcp; rm -f "$SB_HOME/port_snell" "$SB_HOME/port_snell5" ;;
     esac
     load_state
   fi
@@ -6586,8 +6606,9 @@ save_state() {
   if [ -n "$snellp" ]; then
     touch "$SB_HOME/proto_snell"
     [ -n "$port_snell" ] && echo "$port_snell" > "$SB_HOME/port_snell"
+    [ -n "$port_snell5" ] && echo "$port_snell5" > "$SB_HOME/port_snell5"
   else
-    rm -f "$SB_HOME/proto_snell" "$SB_HOME/port_snell"
+    rm -f "$SB_HOME/proto_snell" "$SB_HOME/port_snell" "$SB_HOME/port_snell5"
   fi
   echo "$ym" > "$SB_HOME/ym"
   # 日志级别持久化：之后 proto / port / rotate 重新生成配置时沿用安装时的选择，不会悄悄变回默认值
@@ -7199,6 +7220,7 @@ cloud_ports_hint() {
   [ "$nvp" = yes ] && [ -n "$port_nv" ]  && lines="$lines\n  TCP+UDP $port_nv   Naiveproxy（h2 走 TCP，h3 走 UDP）"
   [ "$anyp" = yes ] && [ -n "$port_any" ] && lines="$lines\n  TCP $port_any   AnyTLS"
   [ "$snellp" = yes ] && [ -n "$port_snell" ] && lines="$lines\n  TCP $port_snell   Snell v6"
+  [ "$snellp" = yes ] && [ -n "$port_snell5" ] && lines="$lines\n  TCP $port_snell5   Snell v5（Mihomo 用）"
   [ "$reap" = yes ] && [ -n "$port_rea" ] && lines="$lines\n  TCP $port_rea   VLESS-Reality"
   [ "$sub" = 1 ] && [ -n "${subport:-}" ] && lines="$lines\n  TCP $subport   订阅服务"
   if [ "${CERT_OK:-0}" = 1 ] || [ -n "${alns:-}" ]; then lines="$lines\n  TCP 80   证书申请 / 续期（acme HTTP-01，不放行则证书到期后失效）"; fi
@@ -7289,6 +7311,7 @@ doctor() {
   [ "$reap" = yes ] && check_one "VLESS-Reality" "$port_rea" tcp
   [ "$anyp" = yes ] && check_one "AnyTLS" "$port_any" tcp
   [ "$snellp" = yes ] && check_one "Snell v6" "$port_snell" tcp
+  [ "$snellp" = yes ] && [ -n "$port_snell5" ] && check_one "Snell v5" "$port_snell5" tcp
   [ "$nvp" = yes ] && check_one Naiveproxy "$port_nv" tcp
   [ "$tup" = yes ] && check_one Tuic "$port_tu" udp
   if [ "$sub" = 1 ] && [ -n "$subport" ]; then
@@ -7399,6 +7422,7 @@ load_state() {
   [ -f "$SB_HOME/port_rea" ] && port_rea=$(cat "$SB_HOME/port_rea")
   [ -f "$SB_HOME/port_any" ] && port_any=$(cat "$SB_HOME/port_any")
   [ -f "$SB_HOME/port_snell" ] && port_snell=$(cat "$SB_HOME/port_snell")
+  [ -f "$SB_HOME/port_snell5" ] && port_snell5=$(cat "$SB_HOME/port_snell5")
   [ -f "$SB_HOME/hyjpt" ] && hyjpt=$(cat "$SB_HOME/hyjpt")
   if [ -z "$hyup" ] && [ -z "$hydown" ] && [ -s "$SB_HOME/hybw" ]; then
     hyup=$(awk '{print $1}' "$SB_HOME/hybw"); hydown=$(awk '{print $2}' "$SB_HOME/hybw")
