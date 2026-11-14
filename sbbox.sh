@@ -2502,7 +2502,7 @@ gen_client() {
     local enc_pw_hy; enc_pw_hy=$(rawurlencode "$pw_hy")
 
     # 主 Hysteria2 节点（全速原生 BBR 拥塞控制，无人工限速）
-    hy2_link="hysteria2://$enc_pw_hy@$add:$port_hy2?alpn=h3$hy2_insecure_q$hyps$hy_bw_q&sni=$sni$hy2_pin$hyobfs_q#Hysteria2-TLS-BBR-Salamander"
+    hy2_link="hysteria2://$enc_pw_hy@$add:$port_hy2?alpn=h3,h2$hy2_insecure_q$hyps$hy_bw_q&sni=$sni$hy2_pin$hyobfs_q#Hysteria2-TLS-BBR-Salamander"
     echo "$hy2_link" >> "$SB_LINK"
 
     echo "💣【 🥇 Hysteria2-TLS-BBR-Salamander (高速主力) 】节点信息如下："
@@ -2515,7 +2515,7 @@ gen_client() {
     local any_pcs="" any_pin=""
     [ "$CERT_OK" != 1 ] && [ -n "$_fp" ] && any_pcs="&pcs=$_fp"
     [ "$CERT_OK" != 1 ] && [ -n "$_sha" ] && any_pin="&pinSHA256=$_sha"
-    any_link="anytls://$(rawurlencode "$pw_any")@$add:$port_any?security=tls&alpn=h2&sni=$sni&peer=$sni&insecure=$jhins&allowInsecure=$jhins&allow_insecure=$jhins&udp=1$any_pcs$any_pin#AnyTLS"
+    any_link="anytls://$(rawurlencode "$pw_any")@$add:$port_any?security=tls&alpn=h3,h2&sni=$sni&peer=$sni&insecure=$jhins&allowInsecure=$jhins&allow_insecure=$jhins&udp=1$any_pcs$any_pin#AnyTLS"
     echo "$any_link" >> "$SB_LINK"
     echo "💣【 🥈 AnyTLS + TLS (新一代 TCP 主力) 】节点信息如下："
     echo "$any_link"; echo
@@ -2545,7 +2545,7 @@ gen_client() {
       1|on|yes|true) [ -n "$tuech_config" ] && tuic_ech="&ech=$(printf %s "$tuech_config" | base64 | tr -d '\n')" ;;
     esac
     # TUIC v5 显式声明 version=5（Shadowrocket 强依赖，避免误判为 v4 握手失败）并保留 security=tls（v2rayN 强校验），对齐 argosbx 升级为 bbr
-    tuic_link="tuic://$uuid_tu:$(rawurlencode "$pw_tu")@$add:$port_tu?version=5&security=tls&congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=$sni&insecure=$jhins&allowInsecure=$jhins&allow_insecure=$jhins$tuic_pcs$tuic_pin$tuic_ech#TUIC"
+    tuic_link="tuic://$uuid_tu:$(rawurlencode "$pw_tu")@$add:$port_tu?version=5&security=tls&congestion_control=bbr&udp_relay_mode=native&alpn=h3,h2&sni=$sni&insecure=$jhins&allowInsecure=$jhins&allow_insecure=$jhins$tuic_pcs$tuic_pin$tuic_ech#TUIC"
     echo "$tuic_link" >> "$SB_LINK"
     echo "💣【 4 Tuic (QUIC 备选) 】节点信息如下："
     echo "$tuic_link"; echo
@@ -3332,7 +3332,7 @@ gen_client_sbox() {
         "password": "'"$pw_hy"'",'"$hyobfs_json"'
         "udp_fragment": true,
         "bind_address_no_port": true,
-        "tls": { "enabled": true, "server_name": "'"$sni"'", "insecure": '"$msins"', "alpn": ["h3"]'"$hy2_tls_extra"' }
+        "tls": { "enabled": true, "server_name": "'"$sni"'", "insecure": '"$msins"', "alpn": ["h3", "h2"]'"$hy2_tls_extra"' }
     }')
     tags+=("Hysteria2-TLS-BBR-Salamander")
   fi
@@ -3355,7 +3355,7 @@ gen_client_sbox() {
         "tls": {
             "enabled": true,
             "server_name": "'"$sni"'",
-            "alpn": ["h2"],
+            "alpn": ["h3", "h2"],
             "insecure": '"$msins"',
             "utls": {
                 "enabled": true,
@@ -3421,7 +3421,7 @@ gen_client_sbox() {
         "heartbeat": "10s",
         "udp_fragment": true,
         "bind_address_no_port": true,
-        "tls": { "enabled": true, "server_name": "'"$sni"'", "insecure": '"$msins"', "alpn": ["h3"]'"$tuic_tls_extra"' }
+        "tls": { "enabled": true, "server_name": "'"$sni"'", "insecure": '"$msins"', "alpn": ["h3", "h2"]'"$tuic_tls_extra"' }
     }')
     tags+=("TUIC")
   fi
@@ -3671,7 +3671,7 @@ gen_client_clash() {
     port: $port_hy2
     type: hysteria2$hy_clash_bw
     password: $pw_hy
-    alpn: [h3]$hyobfs_yaml$hy_ports_yaml
+    alpn: [h3, h2]$hyobfs_yaml$hy_ports_yaml
     sni: $sni
     skip-cert-verify: $msins
     fast-open: true
@@ -3692,7 +3692,7 @@ gen_client_clash() {
     type: anytls
     password: $pw_any
     sni: $sni
-    alpn: [h2]
+    alpn: [h3, h2]
     skip-cert-verify: $msins
     client-fingerprint: chrome
     udp: true
@@ -3720,7 +3720,7 @@ gen_client_clash() {
     type: tuic
     uuid: $uuid_tu
     password: $pw_tu
-    alpn: [h3]
+    alpn: [h3, h2]
     reduce-rtt: true
     heartbeat-interval: 10000
     request-timeout: 8000
