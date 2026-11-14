@@ -2528,17 +2528,12 @@ gen_client() {
     [ "$CERT_OK" != 1 ] && [ -n "$_sha" ] && nv_pin="&pinSHA256=$_sha"
     local nv_uot="&uot=1&udp-over-tcp=true&udp_over_tcp=1"
 
-    # v2.7.28：去掉 http3:// / http2:// 两条同入站的重复写法（v2rayN 不识别，导入即 -1）
-    nv1_link="naive+quic://$(rawurlencode "$nv_user"):$(rawurlencode "$nv_pw")@$add:$port_nv?quic=1&congestion_control=bbr&security=tls&sni=$sni&insecure=0&allowInsecure=0&padding=1$nv_uot$nv_pcs$nv_pin#Naive-H3"
-    # 两条都用 naive+quic:// 方案：v2rayN 导入时只按链接方案判断 QUIC（NaiveFmt.cs：scheme 含 "quic" 才置 NaiveQuic），
-    # 不读 quic=1 参数，naive+https:// 导入后 QUIC 开关永远是关的。两条靠备注名 Naive-H3 / Naive-H2 区分。
-    nv2_link="naive+quic://$(rawurlencode "$nv_user"):$(rawurlencode "$nv_pw")@$add:$port_nv?quic=1&congestion_control=bbr&security=tls&sni=$sni&insecure=0&allowInsecure=0&padding=1$nv_uot$nv_pcs$nv_pin#Naive-H2"
+    # 服务端 naive-in 同时支持 h3 与 h2，合并输出单条兼容链接 #Naiveproxy
+    nv_link="naive+quic://$(rawurlencode "$nv_user"):$(rawurlencode "$nv_pw")@$add:$port_nv?quic=1&congestion_control=bbr&security=tls&sni=$sni&insecure=0&allowInsecure=0&padding=1$nv_uot$nv_pcs$nv_pin#Naiveproxy"
 
-    for l in "$nv1_link" "$nv2_link"; do
-      echo "$l" >> "$SB_LINK"
-    done
+    echo "$nv_link" >> "$SB_LINK"
     echo "💣【 🥉 Naiveproxy (流量形态特殊需求) 】节点信息如下："
-    echo "$nv1_link"; echo "$nv2_link"; echo
+    echo "$nv_link"; echo
   fi
 
   # 4. 4 TUIC (Hysteria2 的 QUIC 备选)
@@ -3391,25 +3386,7 @@ gen_client_sbox() {
   if [ -n "$nvp" ] && [ "$CERT_OK" = 1 ]; then
     ob+=('{
         "type": "naive",
-        "tag": "Naive-H3",
-        "server": "'"$add"'",
-        "server_port": '"$port_nv"',
-        "username": "'"$nv_user"'",
-        "password": "'"$nv_pw"'",
-        "insecure_concurrency": 1,
-        "stream_receive_window": 67108864,
-        "quic_session_receive_window": 134217728,
-        "udp_over_tcp": false,
-        "quic": true,
-        "quic_congestion_control": "bbr",
-        "bind_address_no_port": true,
-        "udp_fragment": true,
-        "tls": { "enabled": true, "insecure": false, "server_name": "'"$sni"'" }
-    }')
-    tags+=("Naive-H3")
-    ob+=('{
-        "type": "naive",
-        "tag": "Naive-H2",
+        "tag": "Naiveproxy",
         "server": "'"$add"'",
         "server_port": '"$port_nv"',
         "username": "'"$nv_user"'",
@@ -3418,12 +3395,13 @@ gen_client_sbox() {
         "stream_receive_window": 67108864,
         "quic_session_receive_window": 134217728,
         "udp_over_tcp": { "enabled": true, "version": 2 },
-        "quic": false,
+        "quic": true,
+        "quic_congestion_control": "bbr",
         "bind_address_no_port": true,
         "udp_fragment": true,
         "tls": { "enabled": true, "insecure": false, "server_name": "'"$sni"'" }
     }')
-    tags+=("Naive-H2")
+    tags+=("Naiveproxy")
   fi
 
   # 5. TUIC (Hysteria2 的 QUIC 备选)
