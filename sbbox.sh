@@ -1307,6 +1307,21 @@ apply_tuning() {
     fi
   }
 
+  # 合并若干端口列表（逗号/空白分隔，可含 a-b 区间），输出去重、升序、连续段压缩为区间的逗号列表；
+  # 非法项与 1-65535 之外的端口丢弃。输入全空时输出空串。
+  merge_port_lists() {
+    printf '%s\n' "$@" | tr -c '0-9-' '\n' | awk -F- '
+      /^[0-9]+(-[0-9]+)?$/ {
+        a = $1 + 0; b = (NF > 1 ? $2 + 0 : a); if (a > b) { t = a; a = b; b = t }
+        if (a < 1) a = 1; if (b > 65535) b = 65535
+        for (p = a; p <= b; p++) print p
+      }' | sort -nu | awk '
+      NR == 1 { s = e = $1; next }
+      $1 == e + 1 { e = $1; next }
+      { printf "%s%s", sep, (s == e ? s : s "-" e); sep = ","; s = e = $1 }
+      END { if (NR) printf "%s%s\n", sep, (s == e ? s : s "-" e) }'
+  }
+
   # ---------- 机型探测：按内存分档 ----------
   MEM_MB=$(awk '/^MemTotal:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 0)
   CPU_CORES=$(nproc 2>/dev/null || echo 1)
@@ -1407,7 +1422,14 @@ apply_tuning() {
   try_sysctl net.ipv4.tcp_max_syn_backlog "$NETDEV_BACKLOG"
   try_sysctl net.ipv4.tcp_max_tw_buckets 65536
   try_sysctl net.ipv4.ip_local_port_range "1024 65535"
-  try_sysctl net.ipv4.ip_local_reserved_ports "8001,8002,8003,8443,8445,8446,8447,10489,10723,10800-10809,11801-11806,13547,16387,17781,18048,18448,18793,19142,23106,25742,27295,27668,27802,28443,29390,29879,38969,62808"
+  # 并入本机实际分配的 sbbox 端口（$SB_HOME/port_*，随机端口不在上面的固定表里），
+  # 再与内核现值取并集而不是整份覆盖：同机的 xray-tuned(xh) 也写这个键，后写的一方会把另一方的端口
+  # 挤出保留表，重启时可能被出站临时端口占用而 bind 失败。代价：已停用的端口不会自动移除（只影响临时端口选择）。
+  local _res_ports="8001,8002,8003,8443,8445,8446,8447,10489,10723,10800-10809,11801-11806,13547,16387,17781,18048,18448,18793,19142,23106,25742,27295,27668,27802,28443,29390,29879,38969,62808" _pf
+  for _pf in "$SB_HOME"/port_*; do
+    [ -f "$_pf" ] && _res_ports="${_res_ports},$(tr -dc '0-9' < "$_pf")"
+  done
+  try_sysctl net.ipv4.ip_local_reserved_ports "$(merge_port_lists "$_res_ports" "$(sysctl -n net.ipv4.ip_local_reserved_ports 2>/dev/null)")"
 
   # conntrack 仅在模块已加载时调整。
   # 开机时 systemd-sysctl 早于 iptables / Docker 加载 nf_conntrack，键还不存在就被静默跳过，
