@@ -1934,13 +1934,14 @@ installsb() {
   # 返回的 CDN 边缘远近却决定之后每条连接的延迟。2026-09-30 本机 32 个常用域名 × 各 3 次：
   # 比最优边缘慢 3ms 以上的，8.8.8.8 有 10 个、1.1.1.1 有 5 个、9.9.9.10 只有 1 个
   # （Apple / iCloud / Microsoft 等 Akamai 系差 10~50ms）；未缓存解析 9.9.9.10 与 1.1.1.1 相当（2~9ms）。
-  # 禁止泄露 DNS（2026-11-15）：servers 只留 dns-secure（DoH 1.1.1.1）。dns-backup(第三方 DoH) / dns-udp(明文 53) / dns-local(系统解析器→OCI)
-  # 都会把查询发给别的解析器或明文发出；路由只引用 dns-secure，删除不影响解析。以上注释里的 9.9.9.10 对比数据仅为历史记录。
+  # 默认自适应宿主机 DNS（local + prefer_go）：不使用 Cloudflare 1.1.1.1，直接沿用主机 /etc/resolv.conf，
+  # 并强制 prefer_go 以避免主机 127.0.0.53 非 systemd-resolved 时触发 org.freedesktop.resolve1 D-Bus 失败；
+  # tag 沿用 dns-secure 以兼容现有路由与 default_domain_resolver 引用。以上注释里的 9.9.9.10 对比数据仅为历史记录。
   local dns_block
   if [ "$dns_optimistic" != "0" ]; then
     dns_block='    "dns": {
         "servers": [
-            { "type": "https", "tag": "dns-secure", "server": "1.1.1.1" }
+            { "type": "local", "tag": "dns-secure", "prefer_go": true }
         ],
         "strategy": "'"$sb_strategy"'",
         "disable_cache": false,
@@ -1951,7 +1952,7 @@ installsb() {
   else
     dns_block='    "dns": {
         "servers": [
-            { "type": "https", "tag": "dns-secure", "server": "1.1.1.1" }
+            { "type": "local", "tag": "dns-secure", "prefer_go": true }
         ],
         "strategy": "'"$sb_strategy"'",
         "disable_cache": false
