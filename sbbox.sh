@@ -2563,7 +2563,7 @@ gen_client() {
       1|on|yes|true) [ -n "$tuech_config" ] && tuic_ech="&ech=$(printf %s "$tuech_config" | base64 | tr -d '\n')" ;;
     esac
     # TUIC v5 显式声明 version=5（Shadowrocket 强依赖，避免误判为 v4 握手失败）并保留 security=tls（v2rayN 强校验），对齐 argosbx 升级为 bbr
-    tuic_link="tuic://$uuid_tu:$(rawurlencode "$pw_tu")@$add:$port_tu?version=5&security=tls&congestion_control=bbr&udp_relay_mode=native&alpn=h3,h2&sni=$sni&insecure=$jhins&allowInsecure=$jhins&allow_insecure=$jhins$tuic_pcs$tuic_pin$tuic_ech#TUIC"
+    tuic_link="tuic://$uuid_tu:$(rawurlencode "$pw_tu")@$add:$port_tu?version=5&security=tls&congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=$sni&insecure=$jhins&allowInsecure=$jhins&allow_insecure=$jhins$tuic_pcs$tuic_pin$tuic_ech#TUIC"
     echo "$tuic_link" >> "$SB_LINK"
     echo "💣【 4 Tuic (QUIC 备选) 】节点信息如下："
     echo "$tuic_link"; echo
@@ -3439,7 +3439,7 @@ gen_client_sbox() {
         "heartbeat": "10s",
         "udp_fragment": true,
         "bind_address_no_port": true,
-        "tls": { "enabled": true, "server_name": "'"$sni"'", "insecure": '"$msins"', "alpn": ["h3", "h2"]'"$tuic_tls_extra"' }
+        "tls": { "enabled": true, "server_name": "'"$sni"'", "insecure": '"$msins"', "alpn": ["h3"]'"$tuic_tls_extra"' }
     }')
     tags+=("TUIC")
   fi
@@ -3738,7 +3738,7 @@ gen_client_clash() {
     type: tuic
     uuid: $uuid_tu
     password: $pw_tu
-    alpn: [h3, h2]
+    alpn: [h3]
     reduce-rtt: true
     heartbeat-interval: 10000
     request-timeout: 8000
