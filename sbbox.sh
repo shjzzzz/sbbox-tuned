@@ -77,7 +77,7 @@ stlsp="${stlsp:-}"                         # ShadowTLS-SS2022（影子伪装）�
 port_shp="${port_shp:-}"                   # ShadowTLS 监听端口（默认 8448）
 arp="${arp:-}"                             # AnyTLS-Reality（通用真实伪装）：arp=1
 port_arp="${port_arp:-}"                   # AnyTLS-Reality 监听端口（默认 8449）
-hyjpt="${hyjpt:-}"                          # Hysteria2 跳跃端口，默认关闭（空）；如 "25000:38000"
+hyjpt="${hyjpt:-}"                          # Hysteria2 跳跃端口，默认关闭（空）；如 "55000:62000"
 hyobfs="${hyobfs:-1}"                       # Hysteria2 salamander 混淆，默认开启；关闭用 hyobfs=0
 hyobfs_pw="${hyobfs_pw:-}"                  # 混淆密码（默认独立随机值）
 hymask="${hymask:-https://www.bing.com}"    # Hysteria2 伪装：反代真实站点；静态 404 用 hymask=none
@@ -227,7 +227,7 @@ showmode() {
   echo "证书管理：sbbox cert status | renew | sync | hook"
   echo "外置 Hy2：sbbox hy2 check | update（每周 sbbox up 只检查并提醒，更新需手动执行并校验 sha256）"
   echo "订阅地址：sbbox sub 【开启】 sbbox sub on 【关闭】 sbbox sub off"
-  echo "端口跳跃：sbbox hop 25000:38000 【默认关闭】 sbbox hop off"
+  echo "端口跳跃：sbbox hop 55000:62000 【默认关闭】 sbbox hop off"
   echo "极速优化：sbbox speed 100 1000（设置客户端上/下行并激活 Hy2 与 TCP Brutal 极速拥塞控制）"
   echo "TCP Brutal：sbbox brutal show | on | off | speed | add | del（TCP Brutal 拥塞控制与限速）"
   echo "更换端口：sbbox port [tu] [hy2] [nv] [rea] [any]（无参数分配 10000-29999 五位数低位随机端口并同步）"
@@ -245,7 +245,7 @@ showmode() {
   echo "  warp=ai|all  (可选) 自动启用 WARP 出站解锁（默认关闭；ai 仅解锁流媒体/AI，all 全量流量）"
   echo "  alns=1   启用 acme 证书（需 ym=你的域名）"
   echo "  ym=域名  acme 证书域名（Hysteria2/AnyTLS/Tuic/Naive 使用）"
-  echo "  hyjpt=25000:38000  Hysteria2 跳跃端口（默认关闭；同机有其他代理脚本时慎开）"
+  echo "  hyjpt=55000:62000  Hysteria2 跳跃端口（默认关闭；同机有其他代理脚本时慎开）"
   echo "  hyup=100 hydown=1000  Hysteria2 Brutal 拥塞控制客户端带宽"
 
   echo "  sub=1    启用 v2rayN / 通用订阅服务（默认开启 1；关闭用 sub=0；subport=端口 subid=令牌 可选）"
@@ -4166,7 +4166,7 @@ apply_hy_hop() {
   fi
 }
 
-# sbbox hop [25000:38000|off]
+# sbbox hop [55000:62000|off]
 cmd_hop() {
   load_state
   if [ "$hyp" != yes ]; then
@@ -4205,13 +4205,13 @@ cmd_hop() {
       if [ -s "$SB_HOME/hyjpt" ]; then
         info "当前 Hysteria2 跳跃端口：$(cat "$SB_HOME/hyjpt")"
       else
-        info "当前未开启端口跳跃（默认关闭）。需要时执行：sbbox hop 25000:38000"
+        info "当前未开启端口跳跃（默认关闭）。需要时执行：sbbox hop 55000:62000"
       fi
-      echo "用法: sbbox hop <端口范围|off> (例如: sbbox hop 25000:38000 或 sbbox hop off)"
+      echo "用法: sbbox hop <端口范围|off> (例如: sbbox hop 55000:62000 或 sbbox hop off)"
       ;;
     *)
       local ports="$action"
-      [ "$ports" = "on" ] && ports="25000:38000"
+      [ "$ports" = "on" ] && ports="55000:62000"
       hyjpt="$ports"
       echo "$hyjpt" > "$SB_HOME/hyjpt"
       apply_hy_hop
@@ -6153,7 +6153,7 @@ _menu_define() {
 
   MENU_HOP=("Hysteria2 端口跳跃管理"
     "查看当前端口跳跃状态::cmd_hop show"
-    "开启/设置端口跳跃范围…::menu_ask 端口范围(如 25000:38000) cmd_hop"
+    "开启/设置端口跳跃范围…::menu_ask 端口范围(如 55000:62000) cmd_hop"
     "关闭端口跳跃::cmd_hop off")
 
   MENU_BLOCK=("出站分流规则管理"
@@ -6315,7 +6315,7 @@ sbbox 节点与协议全能管理命令 (${SBBOX_VERSION})
 【节点与协议矩阵管理】
   sbbox proto [show|<hy2|naive|tuic|reality|anytls> on|off] 协议启用与开关
   sbbox port [[tu] [hy2] [nv] [rea] [any]] 节点端口重新分配或自定义设置
-  sbbox hop [范围|off]  Hysteria2 端口跳跃范围设置 (如 25000:38000)
+  sbbox hop [范围|off]  Hysteria2 端口跳跃范围设置 (如 55000:62000)
   sbbox block [show|cn on|off|ads on|off|update] 出站屏蔽回国 IP / 广告域名
 
 【网络流控调优与加速】
