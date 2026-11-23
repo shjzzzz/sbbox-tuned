@@ -460,8 +460,8 @@ try:
             if ib.get('tcp_multi_path'):
                 ib['tcp_multi_path'] = False
                 changed = True
-            if 'tls' in ib and ib['tls'].get('min_version') == '1.3':
-                ib['tls']['min_version'] = '1.2'
+            if 'tls' in ib and ib['tls'].get('min_version') == '1.2':
+                ib['tls']['min_version'] = '1.3'
                 changed = True
         if ib.get('type') == 'anytls':
             if ib.get('tcp_fast_open'):
@@ -470,8 +470,8 @@ try:
             if ib.get('tcp_multi_path'):
                 ib['tcp_multi_path'] = False
                 changed = True
-            if 'tls' in ib and ib['tls'].get('min_version') == '1.3':
-                ib['tls']['min_version'] = '1.2'
+            if 'tls' in ib and ib['tls'].get('min_version') == '1.2':
+                ib['tls']['min_version'] = '1.3'
                 changed = True
             if 'tls' in ib and 'handshake_timeout' not in ib['tls']:
                 ib['tls']['handshake_timeout'] = '15s'
@@ -513,8 +513,8 @@ try:
             if ib.get('tcp_multi_path'):
                 ib['tcp_multi_path'] = False
                 changed = True
-            if 'tls' in ib and ib['tls'].get('min_version') == '1.3':
-                ib['tls']['min_version'] = '1.2'
+            if 'tls' in ib and ib['tls'].get('min_version') == '1.2':
+                ib['tls']['min_version'] = '1.3'
                 changed = True
         if ib.get('type') == 'anytls':
             if ib.get('tcp_fast_open'):
@@ -523,8 +523,8 @@ try:
             if ib.get('tcp_multi_path'):
                 ib['tcp_multi_path'] = False
                 changed = True
-            if 'tls' in ib and ib['tls'].get('min_version') == '1.3':
-                ib['tls']['min_version'] = '1.2'
+            if 'tls' in ib and ib['tls'].get('min_version') == '1.2':
+                ib['tls']['min_version'] = '1.3'
                 changed = True
             if 'tls' in ib and 'handshake_timeout' not in ib['tls']:
                 ib['tls']['handshake_timeout'] = '15s'
@@ -2164,7 +2164,7 @@ EOF
             "tls": {
                 "enabled": true,
                 "server_name": "$ym",
-                "min_version": "1.2",
+                "min_version": "1.3",
                 "alpn": [ "h3", "h2" ],
                 "certificate_path": "$CERT_DIR/fullchain.cer",
                 "key_path": "$CERT_DIR/private.key",
@@ -2210,7 +2210,7 @@ EOF
             "tls": {
                 "enabled": true,
                 "server_name": "$ym",
-                "min_version": "1.2",
+                "min_version": "1.3",
                 "alpn": [ "h2" ],
                 "certificate_path": "$cert_path",
                 "key_path": "$key_path",
@@ -2338,7 +2338,7 @@ EOF
   cat >> "$SB_CONF" <<EOF
     ],
     "outbounds": [
-        { "type": "direct", "tag": "direct", "tcp_fast_open": true, "udp_fragment": true, "bind_address_no_port": true }
+        { "type": "direct", "tag": "direct", "tcp_fast_open": false, "udp_fragment": true, "bind_address_no_port": true }
     ],
     "route": {
         "rules": [
@@ -2520,11 +2520,11 @@ gen_client() {
 
     local enc_pw_hy; enc_pw_hy=$(rawurlencode "$pw_hy")
 
-    # 主 Hysteria2 节点（全速原生 BBR 拥塞控制，无人工限速）
-    hy2_link="hysteria2://$enc_pw_hy@$add:$port_hy2?alpn=h3,h2$hy2_insecure_q$hyps$hy_bw_q&sni=$sni$hy2_pin$hyobfs_q#Hysteria2-TLS-BBR-Salamander"
+    # 主 Hysteria2 节点（全速原生 BBR 拥塞控制，与 Xray Brutal Hy2 互补零冲突）
+    hy2_link="hysteria2://$enc_pw_hy@$add:$port_hy2?alpn=h3$hy2_insecure_q$hyps$hy_bw_q&sni=$sni$hy2_pin$hyobfs_q#SB-Hysteria2-BBR"
     echo "$hy2_link" >> "$SB_LINK"
 
-    echo "💣【 🥇 Hysteria2-TLS-BBR-Salamander (高速主力) 】节点信息如下："
+    echo "💣【 🥇 SB-Hysteria2-BBR (原生 BBR 高速主力) 】节点信息如下："
     echo "$hy2_link"
     echo
   fi
@@ -2534,9 +2534,9 @@ gen_client() {
     local any_pcs="" any_pin=""
     [ "$CERT_OK" != 1 ] && [ -n "$_fp" ] && any_pcs="&pcs=$_fp"
     [ "$CERT_OK" != 1 ] && [ -n "$_sha" ] && any_pin="&pinSHA256=$_sha"
-    any_link="anytls://$(rawurlencode "$pw_any")@$add:$port_any?security=tls&alpn=h3,h2&sni=$sni&peer=$sni&insecure=$jhins&allowInsecure=$jhins&allow_insecure=$jhins&udp=1$any_pcs$any_pin#AnyTLS"
+    any_link="anytls://$(rawurlencode "$pw_any")@$add:$port_any?security=tls&alpn=h2&sni=$sni&peer=$sni&insecure=$jhins&allowInsecure=$jhins&allow_insecure=$jhins&udp=1$any_pcs$any_pin#SB-AnyTLS"
     echo "$any_link" >> "$SB_LINK"
-    echo "💣【 🥈 AnyTLS + TLS (新一代 TCP 主力) 】节点信息如下："
+    echo "💣【 🥈 SB-AnyTLS + TLS 1.3 (新一代 TCP 主力) 】节点信息如下："
     echo "$any_link"; echo
   fi
 
@@ -3343,7 +3343,7 @@ gen_client_sbox() {
     fi
     ob+=('{
         "type": "hysteria2",
-        "tag": "Hysteria2-TLS-BBR-Salamander",
+        "tag": "SB-Hysteria2-BBR",
         "server": "'"$add"'",
         "server_port": '"$port_hy2"',
         '"$hy_ports_json"'
@@ -3351,22 +3351,22 @@ gen_client_sbox() {
         "password": "'"$pw_hy"'",'"$hyobfs_json"'
         "udp_fragment": true,
         "bind_address_no_port": true,
-        "tls": { "enabled": true, "server_name": "'"$sni"'", "insecure": '"$msins"', "alpn": ["h3", "h2"]'"$hy2_tls_extra"' }
+        "tls": { "enabled": true, "server_name": "'"$sni"'", "insecure": '"$msins"', "alpn": ["h3"]'"$hy2_tls_extra"' }
     }')
-    tags+=("Hysteria2-TLS-BBR-Salamander")
+    tags+=("SB-Hysteria2-BBR")
   fi
 
   # 2. 🥈 AnyTLS (新一代 TCP 主力)
   if [ -n "$anyp" ] && [ "$CERT_OK" = 1 ]; then
     ob+=('{
         "type": "anytls",
-        "tag": "AnyTLS",
+        "tag": "SB-AnyTLS",
         "server": "'"$add"'",
         "server_port": '"$port_any"',
         "password": "'"$pw_any"'",
-        "idle_session_check_interval": "15s",
+        "idle_session_check_interval": "30s",
         "idle_session_timeout": "5m",
-        "min_idle_session": 4,
+        "min_idle_session": 2,
         "bind_address_no_port": true,
         "tcp_keep_alive": "30s",
         "tcp_keep_alive_interval": "5s",
@@ -3374,7 +3374,7 @@ gen_client_sbox() {
         "tls": {
             "enabled": true,
             "server_name": "'"$sni"'",
-            "alpn": ["h3", "h2"],
+            "alpn": ["h2"],
             "insecure": '"$msins"',
             "utls": {
                 "enabled": true,
@@ -3382,7 +3382,7 @@ gen_client_sbox() {
             }
         }
     }')
-    tags+=("AnyTLS")
+    tags+=("SB-AnyTLS")
   fi
 
   # 4. NaiveProxy (HTTPS / 流量形态特殊需求)
@@ -3685,19 +3685,18 @@ gen_client_clash() {
     down: \"$hydown Mbps\""
     fi
     proxies="$proxies
-  - name: Hysteria2-TLS-BBR-Salamander
+  - name: SB-Hysteria2-BBR
     server: $add
     port: $port_hy2
     type: hysteria2$hy_clash_bw
     password: $pw_hy
-    alpn: [h3, h2]$hyobfs_yaml$hy_ports_yaml
+    alpn: [h3]$hyobfs_yaml$hy_ports_yaml
     sni: $sni
     skip-cert-verify: $msins
-    fast-open: true
-    recv-window-conn: 134217728
-    recv-window: 67108864"
+    recv-window-conn: 67108864
+    recv-window: 33554432"
     groups="$groups
-      - Hysteria2-TLS-BBR-Salamander"
+      - SB-Hysteria2-BBR"
   fi
 
   # 2. 🥈 AnyTLS (新一代 TCP 主力)
@@ -3705,22 +3704,22 @@ gen_client_clash() {
   # 订阅服务 sub_server.py 会自动按 UA 对陈旧非 Meta 客户端进行兼容容错过滤，消除配置报错。
   if [ -n "$anyp" ] && [ "$CERT_OK" = 1 ]; then
     proxies="$proxies
-  - name: AnyTLS
+  - name: SB-AnyTLS
     server: $add
     port: $port_any
     type: anytls
     password: $pw_any
     sni: $sni
-    alpn: [h3, h2]
+    alpn: [h2]
     skip-cert-verify: $msins
     client-fingerprint: chrome
     udp: true
-    idle-session-check-interval: 15
+    idle-session-check-interval: 30
     idle-session-timeout: 300
-    min-idle-session: 4"
+    min-idle-session: 2"
 
     groups="$groups
-      - AnyTLS"
+      - SB-AnyTLS"
   fi
 
   # 4. NaiveProxy：v2.7.16 起不再写进 Mihomo 配置。
@@ -3803,13 +3802,13 @@ dns:
   respect-rules: true
   default-nameserver:
     - https://1.1.1.1/dns-query
-    - https://9.9.9.9/dns-query
+    - https://1.0.0.1/dns-query
   proxy-server-nameserver:
     - https://1.1.1.1/dns-query
-    - https://9.9.9.9/dns-query
+    - https://1.0.0.1/dns-query
   nameserver:
     - https://1.1.1.1/dns-query
-    - https://9.9.9.9/dns-query
+    - https://1.0.0.1/dns-query
 proxies:$proxies
 
 proxy-groups:
@@ -5825,7 +5824,7 @@ src, tag, port, dst = sys.argv[1:5]
 c = json.load(open(src))
 ob = dict([o for o in c['outbounds'] if o['tag'] == tag][0])
 ob['server'] = '127.0.0.1'
-ob.pop('detour', None); ob.pop('domain_resolver', None)
+ob.pop('detour', None); ob.pop('domain_resolver', None); ob.pop('server_ports', None); ob.pop('hop_interval', None); ob.pop('hop_interval_max', None)
 cfg = {"log": {"level": "warn"},
        "inbounds": [{"type": "socks", "listen": "127.0.0.1", "listen_port": int(port)}],
        "outbounds": [ob, {"type": "direct", "tag": "direct"}],
@@ -6214,10 +6213,12 @@ _menu_define() {
     "查看最近 100 行日志::sblog 100"
     "指定日志行数…::menu_ask 显示行数 sblog")
 
-  MENU_UPDATE=("更新 sing-box 内核"
-    "按当前通道更新最新版本::cmd_update"
-    "跟进并切换到正式稳定版 (stable)::cmd_update stable"
-    "跟进并切换到预览尝鲜版 (pre)::cmd_update pre")
+  MENU_UPDATE=("[7] 内核更新与版本管理"
+    "按当前通道更新 sing-box 最新版本 (up)::cmd_update"
+    "切换并更新至正式稳定版 (stable)::cmd_update stable"
+    "切换并更新至预览尝鲜版 (pre)::cmd_update pre"
+    "外置 Hysteria2 检查与更新 (hy2)::menu_choose MENU_HY2"
+    "更新 TCP Brutal 内核模块 (brutal update)::cmd_brutal update")
 
   MENU_HY2=("外置 Hysteria2 版本管理"
     "检查外置 Hysteria2 新版本::cmd_hy2 check"
@@ -6252,11 +6253,12 @@ cmd_menu() {
     echo -e "  ${GREEN}[4]${NC} 证书管理与安全凭据 (Certificates & Security)"
     echo -e "  ${GREEN}[5]${NC} 服务生命周期与自愈 (Service & System)"
     echo -e "  ${GREEN}[6]${NC} 高级隧道与扩展网络 (Argo & WARP)"
-    echo -e "  ${RED}[7]${NC} 卸载与清理 (Uninstall)"
+    echo -e "  ${GREEN}[7]${NC} 内核更新与版本管理 (Core Update)"
+    echo -e "  ${RED}[8]${NC} 卸载与清理 (Uninstall)"
     echo -e "  ${YELLOW}[0]${NC} 退出终端 (Exit)"
     echo -e "${CYAN}----------------------------------------------------------------${NC}"
-    echo -e "  快捷直达: 11(状态) 12(节点) 13(订阅) 14(重启) 15(日志) 16(自测)"
-    read -rp "请选择操作分类 [0-7] 或快捷数字: " choice || break
+    echo -e "  快捷直达: 11(状态) 12(节点) 13(订阅) 14(重启) 15(日志) 16(自测) 17(更新)"
+    read -rp "请选择操作分类 [0-8] 或快捷数字: " choice || break
 
     case "$choice" in
       1) menu_loop MENU_NODE ;;
@@ -6265,7 +6267,8 @@ cmd_menu() {
       4) menu_loop MENU_CERT ;;
       5) menu_loop MENU_SVC ;;
       6) menu_loop MENU_TUNNEL ;;
-      7)
+      7) menu_loop MENU_UPDATE ;;
+      8)
         cleandel
         break
         ;;
@@ -6279,6 +6282,7 @@ cmd_menu() {
       14) sbrestart ;;
       15) sblog 20 ;;
       16) cmd_selftest ;;
+      17) menu_choose MENU_UPDATE ;;
       *)
         warn "无效选择"
         ;;
