@@ -1837,9 +1837,9 @@ installsb() {
     fi
     eval "port_$name=$(cat "$SB_HOME/port_$name")"
   }
-  [ -n "$tup" ] && { assign_port tu "$port_tu"; echo "Tuic 端口：$port_tu"; open_port "$port_tu" udp; }
+  [ -n "$tup" ] && { assign_port tu "$port_tu"; echo "Tuic 端口：$port_tu"; open_port "$port_tu" udp; apply_udp_qdos "$port_tu" "tu"; }
   [ -n "$hyp" ] && { assign_port hy2 "$port_hy2"; echo "Hysteria2 端口：$port_hy2"; open_port "$port_hy2" udp; apply_hy_qdos "$port_hy2"; }
-  [ -n "$nvp" ] && { assign_port nv "$port_nv"; echo "Naiveproxy 端口：$port_nv"; open_port "$port_nv" tcp; open_port "$port_nv" udp; }
+  [ -n "$nvp" ] && { assign_port nv "$port_nv"; echo "Naiveproxy 端口：$port_nv"; open_port "$port_nv" tcp; open_port "$port_nv" udp; apply_udp_qdos "$port_nv" "nv"; }
   if [ -n "$reap" ]; then
     assign_port rea "$port_rea"
     echo "VLESS-Reality 端口：$port_rea"
@@ -2035,7 +2035,9 @@ EOF
 
             "tls": {
                 "enabled": true,
+                "server_name": "$ym",
                 "min_version": "1.3",
+                "max_version": "1.3",
                 "alpn": [ "h3" ],
                 "certificate_path": "$cert_path",
                 "key_path": "$key_path",
@@ -2198,6 +2200,7 @@ EOF
                 "enabled": true,
                 "server_name": "$ym",
                 "min_version": "1.3",
+                "max_version": "1.3",
                 "alpn": [ "h3", "h2" ],
                 "certificate_path": "$CERT_DIR/fullchain.cer",
                 "key_path": "$CERT_DIR/private.key",
@@ -2244,6 +2247,7 @@ EOF
                 "enabled": true,
                 "server_name": "$ym",
                 "min_version": "1.3",
+                "max_version": "1.3",
                 "alpn": [ "h2" ],
                 "certificate_path": "$cert_path",
                 "key_path": "$key_path",
@@ -2763,6 +2767,7 @@ TLS_KEY = sys.argv[4] if len(sys.argv) > 4 else ""
 # 订阅端口防爆破频次限制 (内存限流器)
 _failed_ip_attempts = {}
 _ip_lock = threading.Lock()
+_last_prune_ts = 0.0
 MAX_FAILURES_WINDOW = 60
 MAX_FAILURES_ALLOWED = 10
 
@@ -2780,79 +2785,6 @@ def resolve_token_file(token_path):
     if not os.path.isfile(candidate):
         return None
     return candidate
-
-def sanitize_clash_yaml(yaml_text):
-    if "anytls" not in yaml_text:
-        return yaml_text
-
-    lines = yaml_text.splitlines()
-    out_lines = []
-    in_proxies = False
-    current_proxy_lines = []
-    current_proxy_name = None
-    dropped_names = set()
-
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-
-        if re.match(r"^[a-zA-Z0-9_-]+:", line):
-            if current_proxy_lines:
-                is_anytls = any(re.search(r"^\s*type:\s*['\"]?anytls['\"]?", l) for l in current_proxy_lines)
-                if is_anytls:
-                    if current_proxy_name:
-                        dropped_names.add(current_proxy_name)
-                else:
-                    out_lines.extend(current_proxy_lines)
-                current_proxy_lines = []
-                current_proxy_name = None
-            in_proxies = line.startswith("proxies:")
-            out_lines.append(line)
-            i += 1
-            continue
-
-        if in_proxies:
-            m = re.match(r"^\s*-\s*name:\s*(.+)$", line)
-            if m:
-                if current_proxy_lines:
-                    is_anytls = any(re.search(r"^\s*type:\s*['\"]?anytls['\"]?", l) for l in current_proxy_lines)
-                    if is_anytls:
-                        if current_proxy_name:
-                            dropped_names.add(current_proxy_name)
-                    else:
-                        out_lines.extend(current_proxy_lines)
-                    current_proxy_lines = []
-                current_proxy_name = m.group(1).strip().strip("'\"")
-                current_proxy_lines = [line]
-            elif current_proxy_lines:
-                current_proxy_lines.append(line)
-            else:
-                out_lines.append(line)
-            i += 1
-            continue
-
-        out_lines.append(line)
-        i += 1
-
-    if current_proxy_lines:
-        is_anytls = any(re.search(r"^\s*type:\s*['\"]?anytls['\"]?", l) for l in current_proxy_lines)
-        if is_anytls:
-            if current_proxy_name:
-                dropped_names.add(current_proxy_name)
-        else:
-            out_lines.extend(current_proxy_lines)
-
-    if dropped_names:
-        final_lines = []
-        for l in out_lines:
-            m = re.match(r"^\s*-\s*(.+)$", l)
-            if m:
-                item_name = m.group(1).strip().strip("'\"")
-                if item_name in dropped_names:
-                    continue
-            final_lines.append(l)
-        return "\n".join(final_lines) + ("\n" if yaml_text.endswith("\n") else "")
-    return yaml_text
 
 class _NullWriter:
     def write(self, b):
@@ -2898,22 +2830,31 @@ class SubHandler(BaseHTTPRequestHandler):
                 self.wfile = self._real_wfile
 
     def do_GET(self):
+        global _last_prune_ts
         client_ip = self.client_address[0]
         now = time.time()
         with _ip_lock:
+            # 定期清理过期 IP 记录，防止长期运行内存慢涨
+            if now - _last_prune_ts >= MAX_FAILURES_WINDOW or len(_failed_ip_attempts) > 128:
+                stale_ips = [ip for ip, ts_list in _failed_ip_attempts.items() if not any(now - t < MAX_FAILURES_WINDOW for t in ts_list)]
+                for ip in stale_ips:
+                    del _failed_ip_attempts[ip]
+                _last_prune_ts = now
             attempts = [t for t in _failed_ip_attempts.get(client_ip, []) if now - t < MAX_FAILURES_WINDOW]
             if len(attempts) >= MAX_FAILURES_ALLOWED:
                 self.send_error(429)
                 return
-            _failed_ip_attempts[client_ip] = attempts
+            if attempts:
+                _failed_ip_attempts[client_ip] = attempts
+            else:
+                _failed_ip_attempts.pop(client_ip, None)
 
         raw_path = self.path.split("#")[0]
         query = raw_path.split("?", 1)[1] if "?" in raw_path else ""
         token_path = unquote(raw_path.split("?")[0]).lstrip("/")
         if token_path in ("", "index.html"):
-            # 根路径与未知路径一致返回 404，不暴露服务身份
-            self.send_response(404)
-            self.end_headers()
+            # 根路径与未知路径一致返回 404（带 Content-Length: 0，避免客户端收包断流）
+            self.send_error(404)
             return
         # QR 内含带 token 的订阅 URL，必须携带有效 token 才可取：/<token>/qr
         if token_path.endswith("/qr") and resolve_token_file(token_path[:-3]):
@@ -2924,6 +2865,9 @@ class SubHandler(BaseHTTPRequestHandler):
                 with open(qr_file, "rb") as f: content = f.read()
                 self.send_response(200)
                 self.send_header("Content-Type", "image/png")
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
                 self.send_header("Content-Length", str(len(content)))
                 self.end_headers()
                 self.wfile.write(content)
@@ -2940,8 +2884,7 @@ class SubHandler(BaseHTTPRequestHandler):
         if token_file is None:
             with _ip_lock:
                 _failed_ip_attempts.setdefault(client_ip, []).append(time.time())
-            self.send_response(404)
-            self.end_headers()
+            self.send_error(404)
             return
 
         ua = self.headers.get("User-Agent", "").lower()
@@ -2956,11 +2899,12 @@ class SubHandler(BaseHTTPRequestHandler):
             if os.path.isfile(clash_file):
                 with open(clash_file, "r", encoding="utf-8", errors="ignore") as f:
                     content_str = f.read()
-                # AnyTLS 进入全部订阅（含原版 Clash）。原版 Clash 不认识 anytls 类型，可能拒绝加载整份配置；
-                # 不再做 sanitize_clash_yaml 清洗。需要剔除时由客户端自行删除该节点。
                 content = content_str.encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/yaml; charset=utf-8")
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
                 self.send_header("profile-update-interval", "24")
                 self.send_header("content-disposition", 'attachment; filename="sbbox_clash.yaml"')
                 self.send_header("Content-Length", str(len(content)))
@@ -3005,6 +2949,9 @@ class SubHandler(BaseHTTPRequestHandler):
                     pass
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
                 self.send_header("content-disposition", 'attachment; filename="sbox_client.json"')
                 self.send_header("Content-Length", str(len(content)))
                 self.end_headers()
@@ -3757,7 +3704,6 @@ gen_client_clash() {
 
   # 2. 🥈 AnyTLS (新一代 TCP 主力)
   # Mihomo (Clash Meta) 原生支持 anytls 协议；默认写入 clmi.yaml，并支持 client-fingerprint 与 udp。
-  # 订阅服务 sub_server.py 会自动按 UA 对陈旧非 Meta 客户端进行兼容容错过滤，消除配置报错。
   if [ -n "$anyp" ] && [ "$CERT_OK" = 1 ]; then
     proxies="$proxies
   - name: SB-AnyTLS
@@ -3795,7 +3741,7 @@ gen_client_clash() {
     uuid: $uuid_tu
     password: $pw_tu
     alpn: [h3]
-    reduce-rtt: true
+    reduce-rtt: false
     heartbeat-interval: 10000
     request-timeout: 8000
     udp-relay-mode: native
@@ -4181,12 +4127,12 @@ qdos_rule() {
   "$ipt" -I INPUT "$pos" "${spec[@]}" 2>/dev/null || true
 }
 
-apply_hy_qdos() {
-  local port="${1:-$port_hy2}"
+apply_udp_qdos() {
+  local port="$1" tag="${2:-udp}"
   [ -n "$port" ] || return 0
   if [ "$IS_ROOT" = 1 ]; then
-    command -v iptables  >/dev/null 2>&1 && qdos_rule iptables  "$port" "hy_qdos_${port}"
-    command -v ip6tables >/dev/null 2>&1 && qdos_rule ip6tables "$port" "hy6_qdos_${port}"
+    command -v iptables  >/dev/null 2>&1 && qdos_rule iptables  "$port" "${tag}_qdos_${port}"
+    command -v ip6tables >/dev/null 2>&1 && qdos_rule ip6tables "$port" "${tag}6_qdos_${port}"
     if command -v netfilter-persistent >/dev/null 2>&1; then
       netfilter-persistent save >/dev/null 2>&1
     elif [ -x "$(command -v iptables-save 2>/dev/null)" ] && [ -d /etc/iptables ]; then
@@ -4194,6 +4140,10 @@ apply_hy_qdos() {
       ip6tables-save > /etc/iptables/rules.v6 2>/dev/null
     fi
   fi
+}
+
+apply_hy_qdos() {
+  apply_udp_qdos "${1:-$port_hy2}" "hy"
 }
 
 # Hysteria2 跳跃端口（iptables DNAT + 防火墙放行）
