@@ -81,7 +81,7 @@ hyjpt="${hyjpt:-}"                          # Hysteria2 跳跃端口，默认关
 hyobfs="${hyobfs:-1}"                       # Hysteria2 salamander 混淆，默认开启；关闭用 hyobfs=0
 hyobfs_pw="${hyobfs_pw:-}"                  # 混淆密码（默认独立随机值）
 hymask="${hymask:-local}"                   # Hysteria2 伪装：默认 local 本地静态站（零延迟/零外网依赖）；也可填 https://... 反代、file:///路径 或 none 静态 404
-hy_bbr_profile="${hy_bbr_profile:-aggressive}" # Hysteria2 BBR 策略（sing-box 1.14+）：aggressive / standard / conservative（仅非 Brutal 时生效）
+hy_bbr_profile="${hy_bbr_profile:-standard}" # Hysteria2 BBR 策略（sing-box 1.14+）：standard（默认稳态）/ conservative / aggressive（仅非 Brutal 时生效）
 sblevel_env="${sblevel:-}"                   # 记下用户是否显式传了 sblevel：没传时 load_state 才用磁盘上保存的值
 sblevel="${sblevel:-error}"                 # 服务端日志级别：error（默认，只记真正的错误）/ off（完全不落盘）/ warn / info
 blkport="${blkport:-1}"                     # 阻断出站邮件/SMB 端口（防凭据外泄后被拿去发垃圾邮件），关闭用 blkport=0
@@ -2063,11 +2063,11 @@ EOF
     else
       # 不设带宽 → 客户端统一走 BBR。bbr_profile 是 sing-box 1.14 新增项，
       # 不写等价于 standard；显式写出来是为了这条策略不随上游默认值漂移。
-      #   conservative 更让路、standard 均衡、aggressive 跨境丢包场景加速收敛与吞吐。
-      local _bbr_prof="${hy_bbr_profile:-aggressive}"
+      #   conservative 更让路、standard 长期稳态均衡（默认）、aggressive 高抢占（弱网易抖动）。
+      local _bbr_prof="${hy_bbr_profile:-standard}"
       case "$_bbr_prof" in
         conservative|standard|aggressive) ;;
-        *) _bbr_prof="aggressive" ;;
+        *) _bbr_prof="standard" ;;
       esac
       hy_bw="            \"ignore_client_bandwidth\": true,
             \"bbr_profile\": \"$_bbr_prof\",
@@ -2153,10 +2153,10 @@ MASQEOF
             "listen_port": $port_hy2,
             "udp_fragment": true,
             "udp_timeout": "300s",
-            "idle_timeout": "30s",
+            "idle_timeout": "60s",
             "keep_alive_period": "10s",
-            "stream_receive_window": "16MB",
-            "connection_receive_window": "32MB",
+            "stream_receive_window": "8MB",
+            "connection_receive_window": "16MB",
             "users": [
                 { "password": "$pw_hy" }
             ],
@@ -3322,10 +3322,10 @@ gen_client_sbox() {
     if [ -n "$hyup" ] && [ -n "$hydown" ]; then
       hy_client_bw="\"up_mbps\": $hyup, \"down_mbps\": $hydown,"
     else
-      local _sb_bbr_prof="${hy_bbr_profile:-aggressive}"
+      local _sb_bbr_prof="${hy_bbr_profile:-standard}"
       case "$_sb_bbr_prof" in
         conservative|standard|aggressive) ;;
-        *) _sb_bbr_prof="aggressive" ;;
+        *) _sb_bbr_prof="standard" ;;
       esac
       hy_client_bw="\"bbr_profile\": \"$_sb_bbr_prof\","
     fi
@@ -3336,10 +3336,10 @@ gen_client_sbox() {
         "server_port": '"$port_hy2"',
         '"$hy_ports_json"'
         '"$hy_client_bw"'
-        "idle_timeout": "30s",
+        "idle_timeout": "60s",
         "keep_alive_period": "10s",
-        "stream_receive_window": "16MB",
-        "connection_receive_window": "32MB",
+        "stream_receive_window": "8MB",
+        "connection_receive_window": "16MB",
         "password": "'"$pw_hy"'",'"$hyobfs_json"'
         "udp_fragment": true,
         "bind_address_no_port": true,
@@ -3572,8 +3572,7 @@ gen_client_sbox() {
     ],
     "dns": {
         "servers": [
-            { "tag": "remote", "type": "https", "server": "1.1.1.1", "detour": "select" },
-            { "tag": "local", "type": "https", "server": "223.5.5.5", "detour": "direct" },
+            { "tag": "local", "type": "local", "prefer_go": true },
             { "tag": "fakeip", "type": "fakeip", "inet4_range": "198.18.0.0/15", "inet6_range": "fc00::/18" }
         ],
         "rules": [
@@ -3581,7 +3580,7 @@ gen_client_sbox() {
             { "inbound": "tun-in", "query_type": ["A", "AAAA"], "server": "fakeip" }
         ],
         "strategy": "prefer_ipv4",
-        "final": "remote",
+        "final": "local",
         "optimistic": true,
         "timeout": "5s",
         "cache_capacity": 4096
@@ -3670,17 +3669,17 @@ gen_client_clash() {
       local cl_ports="${port_hy2},$(echo "$hyjpt" | tr ':' '-')"
       hy_ports_yaml="
     ports: $cl_ports
-    hop-interval: \"30-90\""
+    hop-interval: 30"
     fi
     if [ -n "$hyup" ] && [ -n "$hydown" ]; then
       hy_clash_bw="
     up: \"$hyup Mbps\"
     down: \"$hydown Mbps\""
     else
-      local _cl_bbr_prof="${hy_bbr_profile:-aggressive}"
+      local _cl_bbr_prof="${hy_bbr_profile:-standard}"
       case "$_cl_bbr_prof" in
         conservative|standard|aggressive) ;;
-        *) _cl_bbr_prof="aggressive" ;;
+        *) _cl_bbr_prof="standard" ;;
       esac
       hy_clash_bw="
     bbr-profile: $_cl_bbr_prof"
@@ -3694,10 +3693,10 @@ gen_client_clash() {
     alpn: [h3]$hyobfs_yaml$hy_ports_yaml
     sni: $sni
     skip-cert-verify: $msins
-    initial-stream-receive-window: 8388608
-    max-stream-receive-window: 16777216
-    initial-connection-receive-window: 20971520
-    max-connection-receive-window: 33554432"
+    initial-stream-receive-window: 4194304
+    max-stream-receive-window: 8388608
+    initial-connection-receive-window: 8388608
+    max-connection-receive-window: 16777216"
     groups="$groups
       - SB-Hysteria2-BBR"
   fi
@@ -3799,18 +3798,13 @@ dns:
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.1/16
   ipv6: false
-  # respect-rules：nameserver 的 DoH 查询也按 rules 走代理，不再从本机 IP 直连 Cloudflare / Quad9（dnsleaktest 会暴露）。
-  # default-nameserver / proxy-server-nameserver 只用来解析节点服务器域名，本来就必须直连，用 IP 型 DoH，不发明文 UDP。
-  respect-rules: true
+  # 自适应当前机器系统 DNS（不硬编码外部公共 DNS）
   default-nameserver:
-    - https://1.1.1.1/dns-query
-    - https://1.0.0.1/dns-query
+    - system
   proxy-server-nameserver:
-    - https://1.1.1.1/dns-query
-    - https://1.0.0.1/dns-query
+    - system
   nameserver:
-    - https://1.1.1.1/dns-query
-    - https://1.0.0.1/dns-query
+    - system
 proxies:$proxies
 
 proxy-groups:
@@ -4023,28 +4017,9 @@ hy2_external_sync_secrets() {
   info "已同步新密钥与 QDoS 防护参数到外置 Hysteria2 配置（$f）"
 }
 
-# 重启外置 hysteria（若存在）。证书轮换后必须重启才会加载新证书。
-# 外置 Hysteria2 的出站 DNS（v2.7.37）。yaml 不写 resolver 时走系统 resolved，
-# 本机上游首选 8.8.8.8：它带 ECS，对 gstatic / Apple / Microsoft 等返回 8~14ms 外的边缘，
-# 同一客户端经外置 Hy2 取 generate_204 每次比 Xray 内置 Hy2 慢 ~28ms（抓包确认是服务端→目标 RTT）。
-# 与 sb.json 的 dns-secure 对齐到 9.9.9.10。只在缺 resolver 段时追加，用户自己写的原样保留。
-# 返回 0 表示改动了文件（调用方负责重启 hysteria-sbbox）。
+# 外置 Hysteria2 出站 DNS：默认不注入外部 resolver，自适应当前机器系统 DNS（/etc/resolv.conf）。
 hy2_external_sync_resolver() {
-  local f=/etc/hysteria/sbbox.yaml
-  [ -f "$f" ] || return 1
-  # v2.7.57：旧版写的明文 UDP 9.9.9.10:53 迁移成 DoT（服务器上每条域名查询原来都以明文发出）。
-  # 只迁移 sbbox 自己写的那一段（type: udp + addr: 9.9.9.10:53），用户改过的 resolver 原样保留。
-  if grep -q '^resolver:' "$f" 2>/dev/null; then
-    if grep -q '^  type: udp$' "$f" 2>/dev/null && grep -q '^    addr: 9.9.9.10:53$' "$f" 2>/dev/null; then
-      cp -a "$f" "$f.bak" 2>/dev/null
-      sed -i -e 's|^  type: udp$|  type: tls|' -e 's|^  udp:$|  tls:|' \
-             -e 's|^    addr: 9.9.9.10:53$|    addr: 9.9.9.10:853\n    sni: dns10.quad9.net\n    insecure: false|' "$f"
-      return 0
-    fi
-    return 1
-  fi
-  cp -a "$f" "$f.bak" 2>/dev/null
-  printf '\n# 出站 DNS：与 sing-box 服务端一致，选近端 CDN 边缘（sbbox v2.7.37）\nresolver:\n  type: tls\n  tls:\n    addr: 9.9.9.10:853\n    timeout: 4s\n    sni: dns10.quad9.net\n    insecure: false\n' >> "$f"
+  return 1
 }
 
 hy2_external_restart() {
