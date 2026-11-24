@@ -80,7 +80,8 @@ port_arp="${port_arp:-}"                   # AnyTLS-Reality 监听端口（默�
 hyjpt="${hyjpt:-}"                          # Hysteria2 跳跃端口，默认关闭（空）；如 "55000:62000"
 hyobfs="${hyobfs:-1}"                       # Hysteria2 salamander 混淆，默认开启；关闭用 hyobfs=0
 hyobfs_pw="${hyobfs_pw:-}"                  # 混淆密码（默认独立随机值）
-hymask="${hymask:-https://www.bing.com}"    # Hysteria2 伪装：反代真实站点；静态 404 用 hymask=none
+hymask="${hymask:-local}"                   # Hysteria2 伪装：默认 local 本地静态站（零延迟/零外网依赖）；也可填 https://... 反代、file:///路径 或 none 静态 404
+hy_bbr_profile="${hy_bbr_profile:-aggressive}" # Hysteria2 BBR 策略（sing-box 1.14+）：aggressive / standard / conservative（仅非 Brutal 时生效）
 sblevel_env="${sblevel:-}"                   # 记下用户是否显式传了 sblevel：没传时 load_state 才用磁盘上保存的值
 sblevel="${sblevel:-error}"                 # 服务端日志级别：error（默认，只记真正的错误）/ off（完全不落盘）/ warn / info
 blkport="${blkport:-1}"                     # 阻断出站邮件/SMB 端口（防凭据外泄后被拿去发垃圾邮件），关闭用 blkport=0
@@ -253,7 +254,7 @@ showmode() {
   echo "  cache_buffer=1MB  cache_file 写缓冲（默认 1MB，sing-box 1.15 新特性）"
   echo "  cache_flush=1m   cache_file 刷盘间隔（默认 1m，sing-box 1.15 新特性）"
   echo "  uuid=自定义 UUID（Tuic 用；各协议密码独立随机，不再复用）"
-  echo "  hymask=URL  Hysteria2 伪装反代目标（默认 https://www.bing.com，none=静态 404）"
+  echo "  hymask=local|URL  Hysteria2 伪装（默认 local 本地静态页，也可填 https://... 反代、file:///路径 或 none 静态 404）"
   echo "  hyobfs=salamander|gecko  Hysteria2 混淆协议（默认 salamander，1.14 新增 gecko，0 关闭）"
   echo "  dns_optimistic=1  启用 1.14 乐观 DNS 缓存并持久化（默认 1）"
   echo "  api=1        启用 1.14 原生 API 服务与实时指标（默认 1）"
@@ -2060,10 +2061,14 @@ EOF
     else
       # 不设带宽 → 客户端统一走 BBR。bbr_profile 是 sing-box 1.14 新增项，
       # 不写等价于 standard；显式写出来是为了这条策略不随上游默认值漂移。
-      #   conservative 更让路、aggressive 更抢占。默认 standard：目标是长期
-      #   稳定吞吐，而不是单次 Speedtest 峰值。
+      #   conservative 更让路、standard 均衡、aggressive 跨境丢包场景加速收敛与吞吐。
+      local _bbr_prof="${hy_bbr_profile:-aggressive}"
+      case "$_bbr_prof" in
+        conservative|standard|aggressive) ;;
+        *) _bbr_prof="aggressive" ;;
+      esac
       hy_bw="            \"ignore_client_bandwidth\": true,
-            \"bbr_profile\": \"standard\",
+            \"bbr_profile\": \"$_bbr_prof\",
             \"brutal_debug\": false,"
     fi
     # Hysteria2 混淆：支持 salamander 与 1.14 新增的 gecko 混淆
@@ -2093,9 +2098,8 @@ EOF
       hy_obfs=""
       rm -f "$SB_HOME/hyobfs_pw" "$SB_HOME/hyobfs_type" 2>/dev/null
     fi
-    # 主动探测防护：静态 404 页面对探测者是明显信号——一个只回 404、
-    # 没有任何真实资源的 HTTPS 端口本身就可疑。反代一个真站点后，
-    # 未通过认证的 HTTP 请求会拿到该站点的真实响应，探测结果与普通反代无异。
+    # 主动探测防护：默认使用本机独立静态页（$SB_HOME/masq），零外网延迟、无第三方风控/放大风险，
+    # 且不暴露 nginx/sub 等业务目录；仍保留 https:// 反代、file:// 目录及 none 静态 404 选项。
     case "$hymask" in
       none|off|0|"")
         hy_mask='            "masquerade": {
@@ -2104,6 +2108,25 @@ EOF
                 "headers": { "Content-Type": "text/html" },
                 "content": "<html><head><title>404 Not Found</title></head><body><center><h1>404 Not Found</h1></center></body></html>"
             },' ;;
+      local|file://*)
+        local _masq_dir="$SB_HOME/masq"
+        if [ "$hymask" != "local" ]; then
+          _masq_dir="${hymask#file://}"
+        fi
+        mkdir -p "$_masq_dir" 2>/dev/null || true
+        if [ ! -s "$_masq_dir/index.html" ]; then
+          cat > "$_masq_dir/index.html" <<'MASQEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Welcome</title></head>
+<body><h1>Welcome</h1><p>This service is running normally.</p></body>
+</html>
+MASQEOF
+        fi
+        hy_mask="            \"masquerade\": {
+                \"type\": \"file\",
+                \"directory\": \"$_masq_dir\"
+            }," ;;
       *)
         hy_mask="            \"masquerade\": {
                 \"type\": \"proxy\",
@@ -2111,6 +2134,11 @@ EOF
                 \"rewrite_host\": true
             }," ;;
     esac
+    local hy_tls_sni=""
+    if [ "$CERT_OK" = 1 ] && [ -n "$ym" ]; then
+      hy_tls_sni="
+                \"server_name\": \"$ym\","
+    fi
     # 外置形态：上面的 obfs / 带宽 / 伪装状态照常生成（节点链接与
     # /etc/hysteria/sbbox.yaml 都要用），但入站不落进 sb.json——
     # 端口已被 hysteria 进程占着，写进去 sing-box 会直接 FATAL。
@@ -2122,6 +2150,11 @@ EOF
             "listen": "::",
             "listen_port": $port_hy2,
             "udp_fragment": true,
+            "udp_timeout": "300s",
+            "idle_timeout": "30s",
+            "keep_alive_period": "10s",
+            "stream_receive_window": "16MB",
+            "connection_receive_window": "32MB",
             "users": [
                 { "password": "$pw_hy" }
             ],
@@ -2129,7 +2162,7 @@ $hy_bw
 ${hy_obfs:+$hy_obfs}
 $hy_mask
             "tls": {
-                "enabled": true,
+                "enabled": true,$hy_tls_sni
                 "min_version": "1.3",
                 "max_version": "1.3",
                 "alpn": [ "h3" ],
@@ -3325,12 +3358,13 @@ gen_client_sbox() {
   if [ -n "$hyp" ]; then
     local hy_ports_json="" hy_client_bw=""
     if [ -n "$hyjpt" ]; then
-      local formatted_jpt="" item
+      local formatted_jpt=" \"${port_hy2}:${port_hy2}\"," item
       for item in $(echo "$hyjpt" | tr ',' ' '); do
         case "$item" in
           *-*) item=$(echo "$item" | tr '-' ':') ;;
         esac
         case "$item" in
+          "${port_hy2}:${port_hy2}"|"$port_hy2") continue ;;
           *:*) formatted_jpt="$formatted_jpt \"$item\"," ;;
           *)   formatted_jpt="$formatted_jpt \"${item}:${item}\"," ;;
         esac
@@ -3340,6 +3374,13 @@ gen_client_sbox() {
     fi
     if [ -n "$hyup" ] && [ -n "$hydown" ]; then
       hy_client_bw="\"up_mbps\": $hyup, \"down_mbps\": $hydown,"
+    else
+      local _sb_bbr_prof="${hy_bbr_profile:-aggressive}"
+      case "$_sb_bbr_prof" in
+        conservative|standard|aggressive) ;;
+        *) _sb_bbr_prof="aggressive" ;;
+      esac
+      hy_client_bw="\"bbr_profile\": \"$_sb_bbr_prof\","
     fi
     ob+=('{
         "type": "hysteria2",
@@ -3348,6 +3389,10 @@ gen_client_sbox() {
         "server_port": '"$port_hy2"',
         '"$hy_ports_json"'
         '"$hy_client_bw"'
+        "idle_timeout": "30s",
+        "keep_alive_period": "10s",
+        "stream_receive_window": "16MB",
+        "connection_receive_window": "32MB",
         "password": "'"$pw_hy"'",'"$hyobfs_json"'
         "udp_fragment": true,
         "bind_address_no_port": true,
@@ -3677,12 +3722,21 @@ gen_client_clash() {
     if [ -n "$hyjpt" ]; then
       local cl_ports="${port_hy2},$(echo "$hyjpt" | tr ':' '-')"
       hy_ports_yaml="
-    ports: $cl_ports"
+    ports: $cl_ports
+    hop-interval: \"30-90\""
     fi
     if [ -n "$hyup" ] && [ -n "$hydown" ]; then
       hy_clash_bw="
     up: \"$hyup Mbps\"
     down: \"$hydown Mbps\""
+    else
+      local _cl_bbr_prof="${hy_bbr_profile:-aggressive}"
+      case "$_cl_bbr_prof" in
+        conservative|standard|aggressive) ;;
+        *) _cl_bbr_prof="aggressive" ;;
+      esac
+      hy_clash_bw="
+    bbr-profile: $_cl_bbr_prof"
     fi
     proxies="$proxies
   - name: SB-Hysteria2-BBR
@@ -3693,8 +3747,10 @@ gen_client_clash() {
     alpn: [h3]$hyobfs_yaml$hy_ports_yaml
     sni: $sni
     skip-cert-verify: $msins
-    recv-window-conn: 67108864
-    recv-window: 33554432"
+    initial-stream-receive-window: 8388608
+    max-stream-receive-window: 16777216
+    initial-connection-receive-window: 20971520
+    max-connection-receive-window: 33554432"
     groups="$groups
       - SB-Hysteria2-BBR"
   fi
@@ -7401,6 +7457,8 @@ load_state() {
   fi
   [ -s "$SB_HOME/hyobfs_pw" ] && hyobfs_pw=$(cat "$SB_HOME/hyobfs_pw")
   [ -s "$SB_HOME/hyobfs_type" ] && hyobfs_type=$(cat "$SB_HOME/hyobfs_type")
+  [ -s "$SB_HOME/hymask" ] && hymask=$(cat "$SB_HOME/hymask")
+  [ -s "$SB_HOME/hy_bbr_profile" ] && hy_bbr_profile=$(cat "$SB_HOME/hy_bbr_profile")
   [ -s "$SB_HOME/api_port" ] && api_port=$(cat "$SB_HOME/api_port")
   [ -z "$sblevel_env" ] && [ -s "$SB_HOME/sblevel" ] && sblevel=$(cat "$SB_HOME/sblevel")
   [ -z "$sbrel_explicit" ] && [ -f "$SB_HOME/sbrel" ] && sbrel=$(cat "$SB_HOME/sbrel")
